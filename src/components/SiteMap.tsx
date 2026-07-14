@@ -120,6 +120,38 @@ function TileLayer({ vb, kind, screenW }: { vb: ViewBox; kind: BgKind; screenW: 
   )
 }
 
+/* ── 동적 축척 바 ─────────────────────────────────────────────────────
+ * 현재 viewBox·컨테이너 크기에서 화면 px당 실거리(m)를 구해
+ * 1-2-5 스텝의 보기 좋은 거리로 스냅한다. 줌인/줌아웃과 항상 정합. */
+function niceDistance(maxMeters: number): number {
+  const pow = 10 ** Math.floor(Math.log10(maxMeters))
+  const d = maxMeters / pow
+  return (d >= 5 ? 5 : d >= 2 ? 2 : 1) * pow
+}
+
+function ScaleBar({ vb, wrap }: { vb: ViewBox; wrap: HTMLDivElement | null }) {
+  const rw = wrap?.clientWidth ?? 900
+  const rh = wrap?.clientHeight ?? 576
+  const s = Math.min(rw / vb.w, rh / vb.h) // 화면 px / 로컬 unit (meet 보정)
+  const mPerPx = M_PER_UNIT / s
+  const meters = niceDistance(mPerPx * 100) // 바 최대 폭 100px
+  const label = meters >= 1000 ? `${meters / 1000} km` : `${meters} m`
+  return (
+    <span className="flex items-end gap-1.5">
+      <span
+        className="inline-block h-[5px]"
+        style={{
+          width: meters / mPerPx,
+          borderLeft: '1px solid var(--axis-line)',
+          borderRight: '1px solid var(--axis-line)',
+          borderBottom: '1px solid var(--axis-line)',
+        }}
+      />
+      <span className="tabular-nums">{label}</span>
+    </span>
+  )
+}
+
 /* ── 줌/팬 viewBox 연산 ───────────────────────────────────────────── */
 const BASE: ViewBox = { x: 0, y: 0, w: 1000, h: 640 }
 const MIN_W = 140
@@ -634,8 +666,7 @@ export default function SiteMap() {
         <div className="absolute bottom-3 right-3 flex items-center gap-2 text-[10px] text-muted">
           {mode === '2d' && bg === 'map' && <span className="opacity-80">© OpenStreetMap · CARTO</span>}
           {mode === '2d' && bg === 'sat' && <span className="opacity-80">© Esri World Imagery</span>}
-          <span className="inline-block h-px w-10 bg-axis" />
-          50 m
+          {mode === '2d' && <ScaleBar vb={vb} wrap={wrapRef.current} />}
         </div>
       </div>
     </div>

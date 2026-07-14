@@ -1,160 +1,381 @@
 import { memo, useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
+import { ChevronDown, ChevronLeft, ChevronRight, Maximize2, Minimize2, RotateCw } from 'lucide-react'
 import SiteMap from '../components/SiteMap'
 import Sparkline from '../components/Sparkline'
-import { Card } from '../components/ui'
+import { Card, SeverityBadge } from '../components/ui'
 import {
   beaconRows,
   controlKpi,
   emergencyRows,
   gasDetectors,
+  gasMetrics,
   genGasHistory,
   liveWorkers,
   trackerRows,
   workItems,
   zoneAlarmStats,
 } from '../data/site'
+import type { GasMetricKey } from '../data/site'
 import { sensors } from '../data/mock'
 
-const O2_COLOR = '#22d3ee' // 레거시: O₂ 시안
-const H2S_COLOR = '#a78bfa' // 레거시: H₂S 보라
+/** 검침기별 5종 가스 히스토리 (스파크라인용 최근 60초) */
+type GasHists = Record<GasMetricKey, number[]>
 
 const th = 'px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-muted whitespace-nowrap'
 const td = 'px-3 py-2 whitespace-nowrap text-[13px]'
 
-/* ═══ KPI 상태 보드 — 정적(30초 주기 재조회 지점), memo로 격리 ═══ */
-const StatusGroup = memo(function StatusGroup({
+/* ═══ 접기/펼치기 그룹 섹션 ═══
+ * 관리자가 필요 없는 그룹을 접어 원하는 데이터(지도·테이블)를 부각할 수 있다.
+ * 접힘 상태는 localStorage에 보존. right 슬롯은 접힌 상태에서도 노출된다. */
+function Section({
+  id,
   title,
-  boxes,
+  right,
+  card = true,
+  children,
 }: {
+  id: string
   title: string
-  boxes: Array<{ name: string; value: number; color: string }>
+  right?: ReactNode
+  card?: boolean
+  children: ReactNode
 }) {
+  const [open, setOpen] = useState(() => localStorage.getItem(`cc-sec-${id}`) !== '0')
+  const toggle = () =>
+    setOpen((v) => {
+      localStorage.setItem(`cc-sec-${id}`, v ? '0' : '1')
+      return !v
+    })
   return (
-    <div className="flex min-w-0 flex-1 flex-col rounded-[14px] border border-hairline bg-surface-1 px-4 py-3">
-      <p className="mb-2 text-xs font-semibold text-muted">{title}</p>
-      <div className="flex flex-1 items-center gap-2">
-        {boxes.map((b) => (
-          <div key={b.name} className="flex min-w-0 flex-1 flex-col items-center rounded-[10px] bg-page/60 px-1 py-2">
-            <span className="truncate text-[11px] text-ink-2">{b.name}</span>
-            <span className={`text-2xl font-bold leading-tight ${b.color}`} style={{ fontVariantNumeric: 'tabular-nums' }}>
-              {b.value.toLocaleString()}
-            </span>
-          </div>
-        ))}
+    <div
+      className={`flex shrink-0 flex-col ${
+        card ? 'rounded-[14px] border border-hairline bg-surface-1' : ''
+      }`}
+    >
+      <div className={`flex items-center gap-2 py-2 ${card ? 'px-4' : 'px-1'}`}>
+        <button
+          onClick={toggle}
+          aria-expanded={open}
+          title={open ? '접기' : '펼치기'}
+          className="flex min-w-0 cursor-pointer items-center gap-1.5 text-xs font-semibold text-muted transition-colors hover:text-ink"
+        >
+          <ChevronDown
+            size={13}
+            className={`shrink-0 transition-transform ${open ? '' : '-rotate-90'}`}
+          />
+          <span className="truncate">{title}</span>
+        </button>
+        <div className="ml-auto flex items-center gap-2">{right}</div>
       </div>
+      {open && children}
     </div>
   )
-})
+}
+
+/* ═══ KPI 상태 보드 — 정적(30초 주기 재조회 지점), memo로 격리 ═══
+ * 단일 카드 + 헤어라인 구분선으로 평탄화 (박스 중첩 제거).
+ * 위험 계열 색상은 값이 0보다 클 때만 적용해 실제 경보만 눈에 띄게 한다. */
+const KPI_REFRESH = 30
+
+const KPI_GROUPS: Array<{
+  title: string
+  boxes: Array<{ name: string; value: number; alert?: 'critical' | 'serious' }>
+}> = [
+  {
+    title: '위급 상황',
+    boxes: [
+      { name: '심박 위험', value: controlKpi.heartAlarm, alert: 'critical' },
+      { name: '유해가스 위험', value: controlKpi.gasAlarm, alert: 'critical' },
+      { name: 'SOS 신호', value: controlKpi.sosAlarm, alert: 'critical' },
+    ],
+  },
+  {
+    title: '위험 작업',
+    boxes: [
+      { name: '위험 작업', value: controlKpi.riskWork, alert: 'serious' },
+      { name: '입조 작업자', value: controlKpi.confined },
+    ],
+  },
+  {
+    title: '전체 작업자 현황',
+    boxes: [
+      { name: '잔류 작업자', value: controlKpi.remain },
+      { name: '전체 입실자', value: controlKpi.totalIn },
+      { name: '전체 퇴실자', value: controlKpi.totalOut },
+    ],
+  },
+]
+
+/* 30초 재조회 카운트다운 — KPI 스트립 우상단에 공통 표기, 자체 타이머로 격리 */
+function RefreshCountdown() {
+  const left = () => KPI_REFRESH - (Math.floor(Date.now() / 1000) % KPI_REFRESH)
+  const [sec, setSec] = useState(left)
+  useEffect(() => {
+    const t = setInterval(() => setSec(left()), 1000)
+    return () => clearInterval(t)
+  }, [])
+  return (
+    <span
+      className="flex shrink-0 items-center gap-1 text-[10px] text-muted"
+      title={`${KPI_REFRESH}초 주기 자동 갱신`}
+    >
+      <RotateCw size={10} />
+      <span style={{ fontVariantNumeric: 'tabular-nums' }}>{sec}초 후 갱신</span>
+    </span>
+  )
+}
 
 const KpiBoard = memo(function KpiBoard() {
   return (
-    <div className="flex gap-3">
-      <StatusGroup
-        title="위급 상황"
-        boxes={[
-          { name: '심박 위험', value: controlKpi.heartAlarm, color: 'text-critical' },
-          { name: '유해가스 위험', value: controlKpi.gasAlarm, color: 'text-critical' },
-          { name: 'SOS 신호', value: controlKpi.sosAlarm, color: 'text-critical' },
-        ]}
-      />
-      <StatusGroup
-        title="위험 작업"
-        boxes={[
-          { name: '위험 작업', value: controlKpi.riskWork, color: 'text-serious' },
-          { name: '입조 작업자', value: controlKpi.confined, color: 'text-ink' },
-        ]}
-      />
-      <StatusGroup
-        title="전체 작업자 현황"
-        boxes={[
-          { name: '잔류 작업자', value: controlKpi.remain, color: 'text-ink' },
-          { name: '전체 입실자', value: controlKpi.totalIn, color: 'text-ink' },
-          { name: '전체 퇴실자', value: controlKpi.totalOut, color: 'text-muted' },
-        ]}
-      />
-    </div>
+    <Section id="kpi" title="안전 KPI" right={<RefreshCountdown />}>
+      <div className="flex divide-x divide-hairline pb-4 pt-1">
+        {KPI_GROUPS.map((g) => (
+          <div key={g.title} className="flex min-w-0 flex-1 flex-col px-4">
+            <p className="truncate text-xs font-semibold text-muted">{g.title}</p>
+            <div className="mt-3 flex flex-1 items-center">
+              {g.boxes.map((b) => (
+                <div key={b.name} className="flex min-w-0 flex-1 flex-col items-center gap-1">
+                  <span className="max-w-full truncate text-xs text-ink-2">{b.name}</span>
+                  <span
+                    className={`text-3xl font-bold leading-tight ${
+                      b.alert && b.value > 0
+                        ? b.alert === 'critical'
+                          ? 'text-critical'
+                          : 'text-serious'
+                        : 'text-ink'
+                    }`}
+                    style={{ fontVariantNumeric: 'tabular-nums' }}
+                  >
+                    {b.value.toLocaleString()}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </Section>
   )
 })
 
-/* ═══ 고정가스검침기 패널 — 자체 1초 타이머 (부분 갱신) ═══ */
-function GasCard({
-  name,
-  o2,
-  h2s,
-  o2Hist,
-  h2sHist,
-  time,
-}: {
-  name: string
-  o2: number
-  h2s: number
-  o2Hist: number[]
-  h2sHist: number[]
-  time: string
-}) {
+/* ═══ 고정가스검침기 패널 — 자체 1초 타이머 (부분 갱신), 페이지네이션 ═══ */
+const GAS_PER_PAGE = 3
+
+function GasCard({ name, hist }: { name: string; hist: GasHists }) {
   return (
-    <div className="flex min-w-0 flex-1 flex-col gap-2 rounded-[14px] border border-hairline bg-surface-1 p-3">
-      <div className="flex items-center justify-between gap-2">
-        <span className="truncate text-xs font-semibold text-ink">{name}</span>
-        <span className="shrink-0 font-mono text-[10px] text-muted">{time}</span>
-      </div>
-      <div className="flex items-center gap-2 rounded-[10px] bg-page/60 px-2.5 py-1.5">
-        <div className="w-20 shrink-0">
-          <span className="text-[10px] text-muted">O₂</span>
-          <div className="text-xl font-bold leading-tight" style={{ color: O2_COLOR, fontVariantNumeric: 'tabular-nums' }}>
-            {o2.toFixed(1)}
-            <span className="ml-0.5 text-[10px] font-normal text-muted">%</span>
+    <div className="flex min-w-0 flex-1 flex-col gap-1.5 px-3">
+      <span className="truncate text-xs font-semibold text-ink">{name}</span>
+      {gasMetrics.map((m) => {
+        const data = hist[m.key]
+        const v = data[data.length - 1]
+        return (
+          <div key={m.key} className="flex items-center gap-2 rounded-[8px] bg-page/60 px-2 py-1">
+            <span className="w-8 shrink-0 text-[10px] text-muted">{m.label}</span>
+            <Sparkline data={data} color={m.color} height={18} min={m.min} max={m.max} />
+            <span
+              className="w-14 shrink-0 text-right text-sm font-bold leading-none"
+              style={{ color: m.color, fontVariantNumeric: 'tabular-nums' }}
+            >
+              {v.toFixed(1)}
+              <span className="ml-0.5 text-[9px] font-normal text-muted">{m.unit}</span>
+            </span>
           </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/* 가스 농도 → 상태 등급
+ * O₂ 정상범위 19.5~23.5% / H₂S 1·2ppm / CO 20·30ppm / NH₃ 25·35ppm / CH₄ 10·20%LEL */
+function gasSeverity(cur: Record<GasMetricKey, number>): 'good' | 'warning' | 'critical' {
+  if (cur.o2 < 19.5 || cur.o2 > 23.5 || cur.h2s >= 2 || cur.co >= 30 || cur.nh3 >= 35 || cur.ch4 >= 20)
+    return 'critical'
+  if (cur.h2s >= 1 || cur.co >= 20 || cur.nh3 >= 25 || cur.ch4 >= 10) return 'warning'
+  return 'good'
+}
+
+/* 전체보기 대시보드 — 모든 검침기를 페이지네이션 없이 큰 카드로 노출 */
+function GasFullscreen({
+  hists,
+  time,
+  onClose,
+}: {
+  hists: GasHists[]
+  time: string
+  onClose: () => void
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col gap-3 bg-page p-5">
+      <div className="flex shrink-0 items-center justify-between">
+        <div className="flex items-baseline gap-2">
+          <h2 className="text-lg font-semibold text-ink">고정가스 검침기 전체 현황</h2>
+          <span className="text-xs text-muted">{gasDetectors.length}대 · 1초 갱신</span>
         </div>
-        <Sparkline data={o2Hist} color={O2_COLOR} height={34} min={18} max={23} />
+        <div className="flex items-center gap-3">
+          {time && <span className="font-mono text-xs text-muted">{time}</span>}
+          <button
+            onClick={onClose}
+            className="flex size-8 cursor-pointer items-center justify-center rounded-lg border border-hairline text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
+            aria-label="전체 화면 종료"
+            title="전체 화면 종료 (ESC)"
+          >
+            <Minimize2 size={15} />
+          </button>
+        </div>
       </div>
-      <div className="flex items-center gap-2 rounded-[10px] bg-page/60 px-2.5 py-1.5">
-        <div className="w-20 shrink-0">
-          <span className="text-[10px] text-muted">H₂S</span>
-          <div className="text-xl font-bold leading-tight" style={{ color: H2S_COLOR, fontVariantNumeric: 'tabular-nums' }}>
-            {h2s.toFixed(1)}
-            <span className="ml-0.5 text-[10px] font-normal text-muted">PPM</span>
-          </div>
-        </div>
-        <Sparkline data={h2sHist} color={H2S_COLOR} height={34} min={0} max={4} />
+      <div className="grid min-h-0 flex-1 grid-cols-1 content-start gap-3 overflow-y-auto md:grid-cols-2 xl:grid-cols-3">
+        {gasDetectors.map((g, i) => {
+          const cur = Object.fromEntries(
+            gasMetrics.map((m) => [m.key, hists[i][m.key][hists[i][m.key].length - 1]]),
+          ) as Record<GasMetricKey, number>
+          return (
+            <div key={g.id} className="flex flex-col gap-2 rounded-[14px] border border-hairline bg-surface-1 p-4">
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-ink">{g.name}</p>
+                  <p className="mt-0.5 font-mono text-[10px] text-muted">{g.id}</p>
+                </div>
+                <SeverityBadge severity={gasSeverity(cur)} />
+              </div>
+              {gasMetrics.map((m) => (
+                <div key={m.key} className="flex items-center gap-3 rounded-[10px] bg-page/60 px-3 py-1.5">
+                  <span className="w-10 shrink-0 text-[11px] text-muted">{m.label}</span>
+                  <Sparkline data={hists[i][m.key]} color={m.color} height={30} min={m.min} max={m.max} />
+                  <span
+                    className="w-20 shrink-0 text-right text-xl font-bold leading-none"
+                    style={{ color: m.color, fontVariantNumeric: 'tabular-nums' }}
+                  >
+                    {cur[m.key].toFixed(1)}
+                    <span className="ml-0.5 text-[10px] font-normal text-muted">{m.unit}</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )
+        })}
       </div>
     </div>
   )
 }
 
+const GAS_ROTATE_SEC = 5
+
 function GasPanel() {
-  const [hists, setHists] = useState(() =>
-    gasDetectors.map((g) => ({ o2: genGasHistory(g.o2, 0.5), h2s: genGasHistory(g.h2s, 0.6) })),
+  const [hists, setHists] = useState<GasHists[]>(() =>
+    gasDetectors.map(
+      (g) =>
+        Object.fromEntries(gasMetrics.map((m) => [m.key, genGasHistory(g[m.key], m.jitter)])) as GasHists,
+    ),
   )
   const [time, setTime] = useState('')
+  const [page, setPage] = useState(0)
+  const [full, setFull] = useState(false)
+  const [paused, setPaused] = useState(false)
+  const pages = Math.ceil(gasDetectors.length / GAS_PER_PAGE)
+  const start = page * GAS_PER_PAGE
+  const visible = gasDetectors.slice(start, start + GAS_PER_PAGE)
 
   useEffect(() => {
     const t = setInterval(() => {
       setHists((prev) =>
-        prev.map((h, i) => ({
-          o2: [...h.o2.slice(1), Math.max(0, gasDetectors[i].o2 + (Math.random() - 0.5) * 0.5)],
-          h2s: [...h.h2s.slice(1), Math.max(0, gasDetectors[i].h2s + (Math.random() - 0.5) * 0.6)],
-        })),
+        prev.map(
+          (h, i) =>
+            Object.fromEntries(
+              gasMetrics.map((m) => [
+                m.key,
+                [...h[m.key].slice(1), Math.max(0, gasDetectors[i][m.key] + (Math.random() - 0.5) * m.jitter)],
+              ]),
+            ) as GasHists,
+        ),
       )
       setTime(new Date().toTimeString().slice(0, 8))
     }, 1000)
     return () => clearInterval(t)
   }, [])
 
+  /* 슬라이드 자동 순환 — 마우스를 올려 읽는 동안·전체보기 중에는 정지,
+   * 수동 이동 시에도 page가 deps에 있어 타이머가 5초부터 다시 시작된다 */
+  useEffect(() => {
+    if (pages <= 1 || paused || full) return
+    const t = setInterval(() => setPage((p) => (p + 1) % pages), GAS_ROTATE_SEC * 1000)
+    return () => clearInterval(t)
+  }, [pages, paused, full, page])
+
+  const pagerBtn =
+    'flex size-6 cursor-pointer items-center justify-center rounded-md text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink disabled:cursor-default disabled:opacity-30'
+
   return (
-    <div className="flex gap-3">
-      {gasDetectors.map((g, i) => (
-        <GasCard
-          key={g.id}
-          name={g.name}
-          o2={hists[i].o2[hists[i].o2.length - 1]}
-          h2s={hists[i].h2s[hists[i].h2s.length - 1]}
-          o2Hist={hists[i].o2}
-          h2sHist={hists[i].h2s}
-          time={time}
-        />
-      ))}
-    </div>
+    <>
+      <Section
+        id="gas"
+        title={`고정가스 검침기 (${gasDetectors.length})`}
+        right={
+          <>
+            {time && <span className="font-mono text-[10px] text-muted">{time}</span>}
+            <button
+              onClick={() => setFull(true)}
+              className="flex h-6 cursor-pointer items-center gap-1 rounded-md px-1.5 text-[11px] font-medium text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
+              title="전체 화면 대시보드"
+            >
+              <Maximize2 size={11} />
+              전체보기
+            </button>
+          </>
+        }
+      >
+        <div onMouseEnter={() => setPaused(true)} onMouseLeave={() => setPaused(false)}>
+          <div className="flex divide-x divide-hairline pb-3 pt-1">
+            {visible.map((g, vi) => (
+              <GasCard key={g.id} name={g.name} hist={hists[start + vi]} />
+            ))}
+            {/* 마지막 페이지에서 칸 수가 모자라도 카드 폭이 흔들리지 않게 자리 유지 */}
+            {Array.from({ length: GAS_PER_PAGE - visible.length }).map((_, i) => (
+              <div key={`ph-${i}`} className="min-w-0 flex-1 px-3" aria-hidden />
+            ))}
+          </div>
+          {/* 하단 페이지네이션 — 자동 순환(5초) + 수동 이동, 검침기가 페이지당 수(3)를 넘을 때만 노출 */}
+          {pages > 1 && (
+            <div className="flex items-center justify-center gap-1 border-t border-hairline py-1.5">
+              <button
+                onClick={() => setPage((p) => (p - 1 + pages) % pages)}
+                className={pagerBtn}
+                aria-label="이전 페이지"
+              >
+                <ChevronLeft size={13} />
+              </button>
+              <span className="flex items-center gap-1.5 px-1">
+                {Array.from({ length: pages }).map((_, p) => (
+                  <button
+                    key={p}
+                    onClick={() => setPage(p)}
+                    aria-label={`${p + 1}페이지`}
+                    className={`size-1.5 cursor-pointer rounded-full transition-colors ${
+                      p === page ? 'bg-primary' : 'bg-hairline hover:bg-muted'
+                    }`}
+                  />
+                ))}
+              </span>
+              <button
+                onClick={() => setPage((p) => (p + 1) % pages)}
+                className={pagerBtn}
+                aria-label="다음 페이지"
+              >
+                <ChevronRight size={13} />
+              </button>
+            </div>
+          )}
+        </div>
+      </Section>
+      {full && <GasFullscreen hists={hists} time={time} onClose={() => setFull(false)} />}
+    </>
   )
 }
 
@@ -338,7 +559,8 @@ const BottomPanels = memo(function BottomPanels() {
   let acc = 0
 
   return (
-    <div className="grid h-[230px] shrink-0 grid-cols-1 gap-3 xl:grid-cols-3">
+    <Section id="bottom" title="상세 현황 패널" card={false}>
+      <div className="grid h-[230px] grid-cols-1 gap-3 xl:grid-cols-3">
       <Card title="배터리 및 상태 이상 IoT 센서 현황" className="flex flex-col overflow-hidden !pb-2">
         <div className="min-h-0 flex-1 overflow-auto">
           {lowSensors.length ? (
@@ -435,7 +657,8 @@ const BottomPanels = memo(function BottomPanels() {
           </ul>
         </div>
       </Card>
-    </div>
+      </div>
+    </Section>
   )
 })
 

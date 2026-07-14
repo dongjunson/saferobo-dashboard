@@ -125,18 +125,34 @@ export function workerPosition(w: LiveWorker, tick: number): [number, number] {
   return w.path[0]
 }
 
-/* ── 고정가스검침기 (O₂ % / H₂S PPM) ─────────────────────────────── */
+/* ── 고정가스검침기 (5종 복합가스: O₂ · H₂S · CO · NH₃ · CH₄) ─────── */
 export interface GasDetector {
   id: string
   name: string
   o2: number
   h2s: number
+  co: number
+  nh3: number
+  ch4: number
 }
 
+/** 수집 항목 정의 — 스파크라인 범위(min/max)·시뮬레이션 흔들림(jitter) 포함 */
+export const gasMetrics = [
+  { key: 'o2', label: 'O₂', unit: '%', color: '#22d3ee', min: 18, max: 23, jitter: 0.5 },
+  { key: 'h2s', label: 'H₂S', unit: 'PPM', color: '#a78bfa', min: 0, max: 4, jitter: 0.6 },
+  { key: 'co', label: 'CO', unit: 'PPM', color: '#fbbf24', min: 0, max: 5, jitter: 1.2 },
+  { key: 'nh3', label: 'NH₃', unit: 'PPM', color: '#34d399', min: 0, max: 15, jitter: 1.0 },
+  { key: 'ch4', label: 'CH₄', unit: '%LEL', color: '#fb7185', min: 0, max: 10, jitter: 0.8 },
+] as const
+export type GasMetricKey = (typeof gasMetrics)[number]['key']
+
 export const gasDetectors: GasDetector[] = [
-  { id: 'GAS-01', name: '하수유입동 01 고정가스검침기', o2: 20.8, h2s: 0.0 },
-  { id: 'GAS-02', name: '탈수기동 02 고정가스검침기', o2: 21.0, h2s: 0.0 },
-  { id: 'GAS-03', name: '축산전처리동 03 고정가스검침기', o2: 21.0, h2s: 0.2 },
+  { id: 'GAS-01', name: '하수유입동 01 고정가스검침기', o2: 20.8, h2s: 0.0, co: 1.2, nh3: 3.5, ch4: 2.1 },
+  { id: 'GAS-02', name: '탈수기동 02 고정가스검침기', o2: 21.0, h2s: 0.0, co: 0.8, nh3: 5.2, ch4: 1.4 },
+  { id: 'GAS-03', name: '축산전처리동 03 고정가스검침기', o2: 21.0, h2s: 0.2, co: 1.5, nh3: 8.4, ch4: 3.2 },
+  { id: 'GAS-04', name: '소화조동 04 고정가스검침기', o2: 20.9, h2s: 0.1, co: 0.6, nh3: 2.1, ch4: 6.8 },
+  { id: 'GAS-05', name: '약품투입동 05 고정가스검침기', o2: 21.2, h2s: 0.3, co: 0.4, nh3: 1.2, ch4: 0.5 },
+  { id: 'GAS-06', name: '슬러지건조동 06 고정가스검침기', o2: 20.6, h2s: 1.6, co: 2.2, nh3: 12.5, ch4: 4.6 },
 ]
 
 /** 초기 스파크라인 히스토리 생성 */
