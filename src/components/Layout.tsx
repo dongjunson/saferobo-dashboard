@@ -88,10 +88,10 @@ function Sidebar() {
         <img
           src="/logo.svg"
           alt="SAFEROBO"
-          className="h-5 w-auto"
+          className="h-6 w-auto"
           style={{ filter: 'brightness(0) invert(1)' }}
         />
-        <p className="mt-1.5 text-xs text-slate-500">스마트 안전관제</p>
+        <p className="mt-2 text-xs text-slate-500">스마트 안전관제</p>
       </div>
       <nav className="flex-1 overflow-y-auto px-3">
         {NAV_GROUPS.map((g, i) => (
