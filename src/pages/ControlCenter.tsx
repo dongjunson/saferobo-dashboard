@@ -1,6 +1,6 @@
 import { memo, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { ChevronDown, ChevronLeft, ChevronRight, Maximize2, Minimize2, RotateCw } from 'lucide-react'
+import { ChevronDown, ChevronLeft, ChevronRight, ClipboardList, Maximize2, Minimize2, RotateCw } from 'lucide-react'
 import SiteMap from '../components/SiteMap'
 import Sparkline from '../components/Sparkline'
 import { Card, SeverityBadge } from '../components/ui'
@@ -424,36 +424,103 @@ function WorkerTable() {
   )
 }
 
-/* ═══ 정적 탭 테이블 ═══ */
-const WorkListTable = memo(function WorkListTable() {
-  const riskColor = { 상: 'text-critical', 중: 'text-serious', 하: 'text-good' }
+/* ═══ 작업 목록 탭 — 상태 필터 칩 + 위험도/상태 배지 테이블 ═══ */
+const WORK_RISK_CHIP: Record<'상' | '중' | '하', string> = {
+  상: 'border-critical/35 bg-critical/10 text-critical',
+  중: 'border-serious/35 bg-serious/10 text-serious',
+  하: 'border-good/35 bg-good/10 text-good',
+}
+const WORK_STATUS_META: Record<
+  '작업중' | '작업대기' | '완료',
+  { dot: string; cls: string }
+> = {
+  작업중: { dot: 'bg-good animate-pulse', cls: 'text-good' },
+  작업대기: { dot: 'bg-warning', cls: 'text-warning' },
+  완료: { dot: 'bg-surface-2', cls: 'text-muted' },
+}
+
+function WorkListTable() {
+  const [filter, setFilter] = useState<'전체' | '작업중' | '작업대기' | '완료'>('전체')
+  const counts = {
+    전체: workItems.length,
+    작업중: workItems.filter((w) => w.status === '작업중').length,
+    작업대기: workItems.filter((w) => w.status === '작업대기').length,
+    완료: workItems.filter((w) => w.status === '완료').length,
+  }
+  const highRisk = workItems.filter((w) => w.risk === '상' && w.status === '작업중').length
+  const items = filter === '전체' ? workItems : workItems.filter((w) => w.status === filter)
   return (
-    <table className="w-full min-w-[860px]">
-      <thead className="sticky top-0 bg-surface-1">
-        <tr className="border-b border-hairline">
-          {['작업명', '위험도', '작업 종류', '작업 공간', '작업 구역', '작업자', '작업예정일시', '작업시작일시', '작업 상태'].map((h) => (
-            <th key={h} className={th}>{h}</th>
-          ))}
-        </tr>
-      </thead>
-      <tbody className="divide-y divide-hairline text-ink-2">
-        {workItems.map((w) => (
-          <tr key={w.name} className="hover:bg-surface-2/40">
-            <td className={`${td} font-medium text-ink`}>{w.name}</td>
-            <td className={`${td} font-semibold ${riskColor[w.risk]}`}>{w.risk}</td>
-            <td className={td}>{w.type}</td>
-            <td className={td}>{w.space}</td>
-            <td className={td}>{w.zone}</td>
-            <td className={td}>{w.workers}</td>
-            <td className={`${td} font-mono`}>{w.planDt}</td>
-            <td className={`${td} font-mono`}>{w.startDt}</td>
-            <td className={`${td} ${w.status === '작업중' ? 'text-good' : w.status === '완료' ? 'text-muted' : ''}`}>{w.status}</td>
-          </tr>
+    <div className="flex h-full min-h-0 flex-col">
+      {/* 상태 필터 칩 + 위험 작업 요약 */}
+      <div className="flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-hairline px-3 py-2">
+        {(['전체', '작업중', '작업대기', '완료'] as const).map((s) => (
+          <button
+            key={s}
+            onClick={() => setFilter(s)}
+            className={`h-7 shrink-0 cursor-pointer whitespace-nowrap rounded-full border px-2.5 text-[11px] font-semibold transition-colors ${
+              filter === s
+                ? 'border-primary bg-primary text-white'
+                : 'border-hairline text-ink-2 hover:bg-surface-2'
+            }`}
+          >
+            {s} <span className="opacity-75">{counts[s]}</span>
+          </button>
         ))}
-      </tbody>
-    </table>
+        {highRisk > 0 && (
+          <span className="ml-auto shrink-0 whitespace-nowrap text-[11px] font-semibold text-critical">
+            ● 위험도 상 진행 중 {highRisk}건
+          </span>
+        )}
+      </div>
+      <div className="min-h-0 flex-1 overflow-auto">
+        <table className="w-full min-w-[860px]">
+          <thead className="sticky top-0 bg-surface-1">
+            <tr className="border-b border-hairline">
+              {['작업명', '위험도', '작업 종류', '작업 공간', '작업 구역', '작업자', '작업예정일시', '작업시작일시', '작업 상태'].map((h) => (
+                <th key={h} className={th}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-hairline text-ink-2">
+            {items.map((w) => (
+              <tr key={w.name} className="hover:bg-surface-2/40">
+                <td className={`${td} font-medium text-ink`}>{w.name}</td>
+                <td className={td}>
+                  <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${WORK_RISK_CHIP[w.risk]}`}>
+                    {w.risk}
+                  </span>
+                </td>
+                <td className={td}>
+                  <span className="inline-flex rounded-md bg-surface-2 px-1.5 py-0.5 text-[11px]">{w.type}</span>
+                </td>
+                <td className={td}>{w.space}</td>
+                <td className={td}>{w.zone}</td>
+                <td className={td}>{w.workers}</td>
+                <td className={`${td} font-mono`}>{w.planDt}</td>
+                <td className={`${td} font-mono`}>{w.startDt}</td>
+                <td className={td}>
+                  <span className={`inline-flex items-center gap-1.5 text-[12px] font-semibold ${WORK_STATUS_META[w.status].cls}`}>
+                    <span className={`size-1.5 rounded-full ${WORK_STATUS_META[w.status].dot}`} />
+                    {w.status}
+                  </span>
+                </td>
+              </tr>
+            ))}
+            {items.length === 0 && (
+              <tr>
+                <td colSpan={9} className={`${td} py-8 text-center text-muted`}>
+                  해당 상태의 작업이 없습니다.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
   )
-})
+}
+
+/* ═══ 정적 탭 테이블 ═══ */
 
 const BeaconTable = memo(function BeaconTable() {
   return (
@@ -542,9 +609,9 @@ const TrackerTable = memo(function TrackerTable() {
   )
 })
 
-/* ═══ 탭 그리드 (탭 전환만 이 컴포넌트 안에서 처리) ═══ */
-const TABS = ['작업자', '이동형 검침기', '작업 목록', '고정형 비콘', '트래커'] as const
-type Tab = (typeof TABS)[number]
+/* ═══ 탭 그리드 — 현황(인원·장비) 그룹과 작업 목록 탭을 구분 ═══ */
+const STATUS_TABS = ['작업자', '이동형 검침기', '고정형 비콘', '트래커'] as const
+type Tab = (typeof STATUS_TABS)[number] | '작업 목록'
 
 const TAB_COUNTS: Record<Tab, number> = {
   작업자: liveWorkers.length,
@@ -556,31 +623,58 @@ const TAB_COUNTS: Record<Tab, number> = {
 
 function TabGrid() {
   const [tab, setTab] = useState<Tab>('작업자')
+  const activeWorks = workItems.filter((w) => w.status === '작업중').length
   return (
     <Card className="flex min-h-0 flex-1 flex-col !p-0">
-      <div className="flex items-center gap-1 overflow-x-auto border-b border-hairline px-3 py-2">
-        {TABS.map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`h-9 shrink-0 cursor-pointer whitespace-nowrap rounded-lg px-3.5 text-[13px] font-medium transition-colors ${
-              tab === t ? 'bg-primary text-white' : 'text-ink-2 hover:bg-surface-2'
+      <div className="flex items-center gap-2 overflow-x-auto border-b border-hairline px-3 py-2">
+        {/* 현황 그룹 — 인원·장비 */}
+        <div className="flex shrink-0 items-center gap-0.5 rounded-lg bg-page/60 p-0.5">
+          {STATUS_TABS.map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={`h-8 shrink-0 cursor-pointer whitespace-nowrap rounded-md px-3 text-[13px] font-medium transition-colors ${
+                tab === t ? 'bg-primary text-white' : 'text-ink-2 hover:bg-surface-2'
+              }`}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+        <div className="h-6 w-px shrink-0 bg-hairline" />
+        {/* 작업 목록 — 현황과 성격이 다른 탭이라 테두리+아이콘+배지로 구분 */}
+        <button
+          onClick={() => setTab('작업 목록')}
+          className={`flex h-9 shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-lg border px-3.5 text-[13px] font-semibold transition-colors ${
+            tab === '작업 목록'
+              ? 'border-primary bg-primary text-white'
+              : 'border-primary/40 text-ink-2 hover:bg-primary/10 hover:text-ink'
+          }`}
+        >
+          <ClipboardList size={14} />
+          작업 목록
+          <span
+            className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+              tab === '작업 목록' ? 'bg-white/20 text-white' : 'bg-primary/15 text-primary'
             }`}
           >
-            {t}
-          </button>
-        ))}
+            진행 {activeWorks}
+          </span>
+        </button>
         <span className="ml-auto shrink-0 whitespace-nowrap pl-2 text-[11px] text-muted">
           Results : {TAB_COUNTS[tab]}
         </span>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto">
-        {tab === '작업자' && <WorkerTable />}
-        {tab === '이동형 검침기' && <PortableGasTable />}
-        {tab === '작업 목록' && <WorkListTable />}
-        {tab === '고정형 비콘' && <BeaconTable />}
-        {tab === '트래커' && <TrackerTable />}
-      </div>
+      {tab === '작업 목록' ? (
+        <WorkListTable />
+      ) : (
+        <div className="min-h-0 flex-1 overflow-auto">
+          {tab === '작업자' && <WorkerTable />}
+          {tab === '이동형 검침기' && <PortableGasTable />}
+          {tab === '고정형 비콘' && <BeaconTable />}
+          {tab === '트래커' && <TrackerTable />}
+        </div>
+      )}
     </Card>
   )
 }
