@@ -392,37 +392,87 @@ function WorkerTable() {
     return () => clearInterval(t)
   }, [])
 
+  /* 우측 컬럼 폭 안에서 가로 스크롤 없이 표시 — 컬럼 최소화(소속 제거,
+   * 입·퇴실 통합, 고정 수신시간 제거) + 컴팩트 셀 + 배지 truncate */
+  const tdc = 'px-2 py-2 whitespace-nowrap text-[12px]'
   return (
-    <table className="w-full min-w-[860px]">
+    <table className="w-full table-fixed">
       <thead className="sticky top-0 bg-surface-1">
         <tr className="border-b border-hairline">
-          {['작업자', '소속', '작업 공간', '작업 구역', '입실시간', '퇴실시간', '입/퇴', '심박수 (bpm)', '피부온도 (℃)', '수신시간'].map((h) => (
-            <th key={h} className={th}>{h}</th>
+          {(
+            [
+              ['작업자', 'w-[12%]'],
+              ['공간', 'w-[8%]'],
+              ['작업 구역', 'w-[15%]'],
+              ['진행 작업', ''],
+              ['입 · 퇴실', 'w-[19%]'],
+              ['BPM', 'w-[8%]'],
+              ['℃', 'w-[8%]'],
+            ] as const
+          ).map(([h, wcls]) => (
+            <th key={h} className={`${th} overflow-hidden text-ellipsis ${wcls}`}>{h}</th>
           ))}
         </tr>
       </thead>
       <tbody className="divide-y divide-hairline">
-        {liveWorkers.map((w) => (
+        {liveWorkers.map((w) => {
+          const work = WORK_BY_WORKER.get(w.name)
+          return (
           <tr key={w.id} className={`hover:bg-surface-2/40 ${w.danger ? 'text-critical' : 'text-ink-2'}`}>
-            <td className={`${td} font-medium ${w.danger ? '' : 'text-ink'}`}>
+            <td className={`${tdc} truncate font-medium ${w.danger ? '' : 'text-ink'}`} title={`${w.name} · ${w.vendor}`}>
               {w.danger && '● '}
               {w.name}
             </td>
-            <td className={td}>{w.vendor}</td>
-            <td className={td}>{w.space}</td>
-            <td className={td}>{w.zone}</td>
-            <td className={`${td} font-mono`}>{w.inTime}</td>
-            <td className={`${td} font-mono`}>{w.outTime ?? '-'}</td>
-            <td className={td}>{w.outTime ? '퇴장' : '입장'}</td>
-            <td className={`${td} font-mono`}>{w.outTime ? '-' : heartbeats[w.id] ?? w.heartRate}</td>
-            <td className={`${td} font-mono`}>{w.outTime ? '-' : w.skinTemp.toFixed(1)}</td>
-            <td className={`${td} font-mono text-muted`}>2026.07.14 (13:45)</td>
+            <td className={`${tdc} truncate`}>{w.space}</td>
+            <td className={`${tdc} truncate`}>{w.zone}</td>
+            {/* 배정된 작업 목록 항목 — 위험도 색 배지로 강조 */}
+            <td className={`${tdc} !whitespace-normal`}>
+              {work ? (
+                <span
+                  className={`inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${
+                    work.status === '완료'
+                      ? 'border-hairline bg-surface-2 text-muted'
+                      : WORK_RISK_CHIP[work.risk]
+                  }`}
+                  title={`${work.name} · 위험도 ${work.risk} · ${work.type} · ${work.status}`}
+                >
+                  <span className="shrink-0 rounded-sm bg-page/40 px-1 text-[10px] opacity-90">{work.type}</span>
+                  <span className="truncate">{work.name}</span>
+                  {work.status !== '작업중' && <span className="shrink-0 opacity-70">· {work.status}</span>}
+                </span>
+              ) : (
+                <span className="text-muted">-</span>
+              )}
+            </td>
+            {/* 입·퇴실 — 한 그룹 배지: [입실시간 | 퇴실시간·재실] */}
+            <td className={`${tdc} truncate`}>
+              <span className="inline-flex overflow-hidden rounded-full border border-hairline text-[10px] leading-none">
+                <span className="bg-surface-2 px-1.5 py-1 font-mono text-ink-2" title="입실">
+                  {w.inTime}
+                </span>
+                {w.outTime ? (
+                  <span className="px-1.5 py-1 font-mono text-muted" title="퇴실">
+                    {w.outTime}
+                  </span>
+                ) : (
+                  <span className="bg-good/10 px-1.5 py-1 font-semibold text-good" title="재실 중">
+                    재실
+                  </span>
+                )}
+              </span>
+            </td>
+            <td className={`${tdc} font-mono`}>{w.outTime ? '-' : heartbeats[w.id] ?? w.heartRate}</td>
+            <td className={`${tdc} font-mono`}>{w.outTime ? '-' : w.skinTemp.toFixed(1)}</td>
           </tr>
-        ))}
+          )
+        })}
       </tbody>
     </table>
   )
 }
+
+/* 작업자 → 배정 작업 매핑 — 작업 목록의 대표 작업자명('김철수 외 2' → 김철수)으로 연결 */
+const WORK_BY_WORKER = new Map(workItems.map((wi) => [wi.workers.split(' ')[0], wi]))
 
 /* ═══ 작업 목록 탭 — 상태 필터 칩 + 위험도/상태 배지 테이블 ═══ */
 const WORK_RISK_CHIP: Record<'상' | '중' | '하', string> = {
