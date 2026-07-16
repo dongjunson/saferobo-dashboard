@@ -266,6 +266,49 @@ export function workerPosition(w: LiveWorker, tick: number): [number, number] {
   return w.path[0]
 }
 
+/* ── 입실/퇴실 기록 — 금일 건물별 게이트 이벤트 ──────────────────── */
+export interface EntryLog {
+  worker: string
+  vendor: string
+  zone: string
+  type: '입실' | '퇴실'
+  time: string // HH:MM
+}
+
+export const entryLogs: EntryLog[] = [
+  { worker: '김철수', vendor: '대한중공업', zone: '탈수기동', type: '입실', time: '07:12' },
+  { worker: '김철수', vendor: '대한중공업', zone: '탈수기동', type: '퇴실', time: '12:02' },
+  { worker: '김철수', vendor: '대한중공업', zone: '탈수기동', type: '입실', time: '12:48' },
+  { worker: '박영호', vendor: '서해산업', zone: '하수유입동', type: '입실', time: '07:03' },
+  { worker: '강민준', vendor: '금강ENG', zone: '하수유입동', type: '입실', time: '09:20' },
+  { worker: '강민준', vendor: '금강ENG', zone: '하수유입동', type: '퇴실', time: '10:40' },
+  { worker: '박영호', vendor: '서해산업', zone: '하수유입동', type: '퇴실', time: '11:58' },
+  { worker: '박영호', vendor: '서해산업', zone: '하수유입동', type: '입실', time: '12:51' },
+  { worker: '오세영', vendor: '금강ENG', zone: '관리동', type: '입실', time: '07:19' },
+  { worker: '이민재', vendor: '금강ENG', zone: '관리동', type: '입실', time: '07:45' },
+  { worker: '이민재', vendor: '금강ENG', zone: '관리동', type: '퇴실', time: '12:05' },
+  { worker: '이민재', vendor: '금강ENG', zone: '관리동', type: '입실', time: '12:55' },
+  { worker: '오세영', vendor: '금강ENG', zone: '관리동', type: '퇴실', time: '16:40' },
+  { worker: '최성훈', vendor: '대한중공업', zone: '축산전처리동', type: '입실', time: '06:58' },
+  { worker: '윤재호', vendor: '남도기공', zone: '축산전처리동', type: '입실', time: '08:30' },
+  { worker: '윤재호', vendor: '남도기공', zone: '축산전처리동', type: '퇴실', time: '09:45' },
+  { worker: '최성훈', vendor: '대한중공업', zone: '축산전처리동', type: '퇴실', time: '12:00' },
+  { worker: '최성훈', vendor: '대한중공업', zone: '축산전처리동', type: '입실', time: '12:40' },
+  { worker: '정우진', vendor: '남도기공', zone: '급수동', type: '입실', time: '07:31' },
+  { worker: '정우진', vendor: '남도기공', zone: '급수동', type: '퇴실', time: '12:10' },
+  { worker: '정우진', vendor: '남도기공', zone: '급수동', type: '입실', time: '13:02' },
+  { worker: '한지훈', vendor: '서해산업', zone: '실험동', type: '입실', time: '08:02' },
+  { worker: '임동혁', vendor: '대한중공업', zone: '전기실', type: '입실', time: '07:55' },
+  { worker: '임동혁', vendor: '대한중공업', zone: '전기실', type: '퇴실', time: '11:50' },
+  { worker: '임동혁', vendor: '대한중공업', zone: '전기실', type: '입실', time: '12:45' },
+  { worker: '서지훈', vendor: '금강ENG', zone: '소화조동', type: '입실', time: '09:10' },
+  { worker: '서지훈', vendor: '금강ENG', zone: '소화조동', type: '퇴실', time: '10:20' },
+  { worker: '문성호', vendor: '남도기공', zone: '약품투입동', type: '입실', time: '10:05' },
+  { worker: '문성호', vendor: '남도기공', zone: '약품투입동', type: '퇴실', time: '11:15' },
+  { worker: '조현우', vendor: '서해산업', zone: '슬러지건조동', type: '입실', time: '08:40' },
+  { worker: '조현우', vendor: '서해산업', zone: '슬러지건조동', type: '퇴실', time: '09:30' },
+]
+
 /* ── 고정형 가스검침기 (5종 복합가스: O₂ · H₂S · CO · NH₃ · CH₄) ───
  * 구역(비콘 기반 작업 구역)에 설치되어 지도에 표시된다. */
 export interface GasReading {

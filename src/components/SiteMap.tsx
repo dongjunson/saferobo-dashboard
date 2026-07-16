@@ -14,6 +14,7 @@ import {
 import type { LayerKey } from './Site3D'
 import {
   assessZoneRisks,
+  entryLogs,
   floorDefs,
   gasDetectors,
   gasMetrics,
@@ -1052,6 +1053,48 @@ function ZoneDetailModal({
               })}
               {zoneWorkers.length === 0 && <li className="py-1.5 text-xs text-muted">재실 작업자가 없습니다.</li>}
             </ul>
+
+            {(() => {
+              /* 입실·퇴실 이벤트를 방문 단위로 페어링 — 한 행 = 입실 → 퇴실 */
+              const evs = entryLogs
+                .filter((l) => l.zone === zone.name)
+                .sort((a, b) => (a.time > b.time ? 1 : -1))
+              const open = new Map<string, { worker: string; vendor: string; in: string; out: string | null }>()
+              const sessions: Array<{ worker: string; vendor: string; in: string; out: string | null }> = []
+              for (const e of evs) {
+                if (e.type === '입실') {
+                  const s = { worker: e.worker, vendor: e.vendor, in: e.time, out: null }
+                  sessions.push(s)
+                  open.set(e.worker, s)
+                } else {
+                  const s = open.get(e.worker)
+                  if (s && !s.out) s.out = e.time
+                }
+              }
+              sessions.sort((a, b) => (a.in < b.in ? 1 : -1))
+              return (
+                <>
+                  <p className="mt-4 text-[10px] font-semibold uppercase tracking-wider text-muted">
+                    입실 / 퇴실 기록 ({sessions.length})
+                  </p>
+                  <ul className="mt-1.5 flex max-h-56 flex-col divide-y divide-hairline overflow-y-auto">
+                    {sessions.map((s, i) => (
+                      <li key={i} className="flex items-center gap-2 py-1.5 text-[12px]">
+                        <span className="truncate font-medium text-ink">{s.worker}</span>
+                        <span className="truncate text-[10px] text-muted">{s.vendor}</span>
+                        <span className="ml-auto shrink-0 font-mono text-[11px] text-ink-2">
+                          {s.in} <span className="text-muted">→</span>{' '}
+                          {s.out ?? <span className="font-sans text-[10px] font-semibold text-good">재실</span>}
+                        </span>
+                      </li>
+                    ))}
+                    {sessions.length === 0 && (
+                      <li className="py-1.5 text-xs text-muted">금일 입·퇴실 기록이 없습니다.</li>
+                    )}
+                  </ul>
+                </>
+              )
+            })()}
 
             <p className="mt-4 text-[10px] font-semibold uppercase tracking-wider text-muted">
               고정형 가스검침기 ({zoneDets.length})
