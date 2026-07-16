@@ -131,9 +131,15 @@ export default function Site3D({
 
     const camera = new THREE.PerspectiveCamera(45, 1, 1, 10000)
     const tgt = new THREE.Vector3((bx0 + bx1) / 2, -12, (bz0 + bz1) / 2)
-    if (focus) {
-      const r = Math.max(bx1 - bx0, bz1 - bz0) * 1.15 + 60
-      camera.position.set(tgt.x + r * 0.75, r * 0.72, tgt.z + r * 0.75)
+    if (focus && fPts) {
+      /* 건물 실측(패딩 제외) 크기에 맞춰 카메라를 최적화 — 건물이 화면을 채우도록 */
+      const fw = Math.max(...fPts.map((p) => p[0])) - Math.min(...fPts.map((p) => p[0]))
+      const fd = Math.max(...fPts.map((p) => p[1])) - Math.min(...fPts.map((p) => p[1]))
+      const fBottom = Math.min(...focus.floors.map((lv) => LEVEL_Y[lv]))
+      const fTop = focus.floors.includes('F1') ? FLOOR_H : 0
+      tgt.y = (fBottom + fTop) / 2
+      const r = Math.max(fw, fd, (fTop - fBottom) * 2) * 0.85 + 70
+      camera.position.set(tgt.x + r * 0.8, tgt.y + r * 0.62, tgt.z + r * 0.8)
     } else {
       camera.position.set(1150, 520, 1150)
     }

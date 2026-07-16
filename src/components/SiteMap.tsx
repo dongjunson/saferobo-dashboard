@@ -822,28 +822,27 @@ function ZoneDetailModal({
                   </button>
                 ))}
               </div>
-              <div
-                className={`flex rounded-lg border border-hairline p-0.5 transition-opacity ${
-                  !flat ? 'pointer-events-none opacity-40' : ''
-                }`}
-              >
-                {floorsSorted.map((f) => {
-                  const def = floorDefs.find((d) => d.id === f)!
-                  const cnt = zoneWorkers.filter((w) => workerFloor(w) === f).length
-                  return (
-                    <button
-                      key={f}
-                      onClick={() => setFl(f)}
-                      className={`h-7 cursor-pointer whitespace-nowrap rounded-md px-2.5 text-xs font-semibold transition-colors ${
-                        flat && fl === f ? 'bg-primary text-white' : 'text-ink-2 hover:bg-surface-2'
-                      }`}
-                    >
-                      {def.short}
-                      {cnt > 0 && <span className="ml-1 opacity-80">({cnt})</span>}
-                    </button>
-                  )
-                })}
-              </div>
+              {/* 층 탭 — 2D 층별 보기 전용 (3D에서는 숨김) */}
+              {flat && (
+                <div className="flex rounded-lg border border-hairline p-0.5">
+                  {floorsSorted.map((f) => {
+                    const def = floorDefs.find((d) => d.id === f)!
+                    const cnt = zoneWorkers.filter((w) => workerFloor(w) === f).length
+                    return (
+                      <button
+                        key={f}
+                        onClick={() => setFl(f)}
+                        className={`h-7 cursor-pointer whitespace-nowrap rounded-md px-2.5 text-xs font-semibold transition-colors ${
+                          fl === f ? 'bg-primary text-white' : 'text-ink-2 hover:bg-surface-2'
+                        }`}
+                      >
+                        {def.short}
+                        {cnt > 0 && <span className="ml-1 opacity-80">({cnt})</span>}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
               <span className="ml-auto text-[11px] text-muted">
                 {flat ? '1초 갱신 · 실시간 위치' : '드래그 회전 · 휠 줌 · 실시간 위치'}
               </span>
@@ -1308,68 +1307,7 @@ export default function SiteMap() {
           <span className="truncate text-[11px] text-muted">비콘 {tracking}명 추적 중 · 1초 갱신</span>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
-          {/* 배경 지도 (2D 전용 — 레거시 지도/스카이뷰 대응) */}
-          <div
-            className={`flex rounded-lg border border-hairline p-0.5 transition-opacity ${
-              mode !== '2d' ? 'pointer-events-none opacity-40' : ''
-            }`}
-          >
-            {(
-              [
-                ['none', '기본'],
-                ['map', '지도'],
-                ['sat', '위성'],
-              ] as const
-            ).map(([v, label]) => (
-              <button
-                key={v}
-                onClick={() => setBg(v)}
-                className={`h-7 cursor-pointer whitespace-nowrap rounded-md px-2.5 text-xs font-semibold transition-colors ${
-                  bg === v ? 'bg-primary text-white' : 'text-ink-2 hover:bg-surface-2'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          {/* 층 선택 (2D 전용 — 3D는 전 층 표시) · ▲▼로 위아래 층 이동 */}
-          <div
-            className={`flex rounded-lg border border-hairline p-0.5 transition-opacity ${
-              mode === '3d' ? 'pointer-events-none opacity-40' : ''
-            }`}
-          >
-            {floorDefs.map((f) => (
-              <button
-                key={f.id}
-                onClick={() => setFloor(f.id)}
-                className={`h-7 cursor-pointer whitespace-nowrap rounded-md px-2.5 text-xs font-semibold transition-colors ${
-                  floor === f.id ? 'bg-primary text-white' : 'text-ink-2 hover:bg-surface-2'
-                }`}
-                title={f.name}
-              >
-                {f.short}
-              </button>
-            ))}
-            <div className="mx-0.5 w-px self-stretch bg-hairline" />
-            <button
-              onClick={() => stepFloor(-1)}
-              disabled={floor === 'F1'}
-              className={floorStepBtn}
-              aria-label="위층으로"
-              title="위층으로"
-            >
-              <ChevronUp size={14} />
-            </button>
-            <button
-              onClick={() => stepFloor(1)}
-              disabled={floor === 'B2'}
-              className={floorStepBtn}
-              aria-label="아래층으로"
-              title="아래층으로"
-            >
-              <ChevronDown size={14} />
-            </button>
-          </div>
+          {/* 2D/3D 토글 — 맨 왼쪽. 3D에서는 아래 2D 전용 컨트롤을 숨겨 간단하게 */}
           <div className="flex rounded-lg border border-hairline p-0.5">
             {(['2d', '3d'] as const).map((m) => (
               <button
@@ -1383,6 +1321,64 @@ export default function SiteMap() {
               </button>
             ))}
           </div>
+          {mode === '2d' && (
+            <>
+              {/* 배경 지도 (2D 전용 — 레거시 지도/스카이뷰 대응) */}
+              <div className="flex rounded-lg border border-hairline p-0.5">
+                {(
+                  [
+                    ['none', '기본'],
+                    ['map', '지도'],
+                    ['sat', '위성'],
+                  ] as const
+                ).map(([v, label]) => (
+                  <button
+                    key={v}
+                    onClick={() => setBg(v)}
+                    className={`h-7 cursor-pointer whitespace-nowrap rounded-md px-2.5 text-xs font-semibold transition-colors ${
+                      bg === v ? 'bg-primary text-white' : 'text-ink-2 hover:bg-surface-2'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {/* 층 선택 · ▲▼로 위아래 층 이동 */}
+              <div className="flex rounded-lg border border-hairline p-0.5">
+                {floorDefs.map((f) => (
+                  <button
+                    key={f.id}
+                    onClick={() => setFloor(f.id)}
+                    className={`h-7 cursor-pointer whitespace-nowrap rounded-md px-2.5 text-xs font-semibold transition-colors ${
+                      floor === f.id ? 'bg-primary text-white' : 'text-ink-2 hover:bg-surface-2'
+                    }`}
+                    title={f.name}
+                  >
+                    {f.short}
+                  </button>
+                ))}
+                <div className="mx-0.5 w-px self-stretch bg-hairline" />
+                <button
+                  onClick={() => stepFloor(-1)}
+                  disabled={floor === 'F1'}
+                  className={floorStepBtn}
+                  aria-label="위층으로"
+                  title="위층으로"
+                >
+                  <ChevronUp size={14} />
+                </button>
+                <button
+                  onClick={() => stepFloor(1)}
+                  disabled={floor === 'B2'}
+                  className={floorStepBtn}
+                  aria-label="아래층으로"
+                  title="아래층으로"
+                >
+                  <ChevronDown size={14} />
+                </button>
+              </div>
+            </>
+          )}
           <button
             onClick={() => setFull((v) => !v)}
             className="flex size-8 cursor-pointer items-center justify-center rounded-lg border border-hairline text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"

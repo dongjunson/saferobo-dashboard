@@ -85,12 +85,10 @@ function Sidebar() {
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-white/5 bg-[#1e293b]">
       <div className="px-5 pt-5 pb-4">
-        <img
-          src="/logo.svg"
-          alt="SAFEROBO"
-          className="h-6 w-auto"
-          style={{ filter: 'brightness(0) invert(1)' }}
-        />
+        <div className="flex items-center gap-2.5">
+          <img src="/android-chrome-192x192.png" alt="SAFEROBO" className="h-7 w-7 rounded-[8px]" />
+          <span className="text-lg font-extrabold tracking-tight text-white">SAFEROBO</span>
+        </div>
         <p className="mt-2 text-xs text-slate-500">스마트 안전관제</p>
       </div>
       <nav className="flex-1 overflow-y-auto px-3">
