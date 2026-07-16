@@ -1,5 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  ChevronDown,
+  ChevronUp,
   LocateFixed,
   Maximize2,
   Minimize2,
@@ -18,7 +20,6 @@ import {
   liveWorkers,
   mapBeacons,
   portableGasDetectors,
-  siteBoundary,
   tunnelEntrances,
   utilityTunnels,
   workerFloor,
@@ -39,6 +40,8 @@ const LEVEL_DY: Record<FloorId, number> = { F1: 0, B1: 36, B2: 72 }
 const LEVEL_GAP = 36
 const LV_ORDER: Record<FloorId, number> = { B2: 0, B1: 1, F1: 2 }
 const FLOOR_SHORT = Object.fromEntries(floorDefs.map((f) => [f.id, f.short])) as Record<FloorId, string>
+const floorStepBtn =
+  'flex h-7 w-7 cursor-pointer items-center justify-center rounded-md text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink disabled:cursor-default disabled:opacity-30'
 
 /* ── 구역 위험도(환경 데이터 기반) — 정적 목업 데이터라 모듈 단위 1회 평가 ── */
 const ZONE_RISK = new Map(assessZoneRisks().map((r) => [r.zone, r]))
@@ -240,19 +243,21 @@ const StaticLayers = memo(function StaticLayers({
       const p = proj(x, y, mode)
       return [p[0], p[1] + (iso ? LEVEL_DY[lv] : 0)]
     }
-    const boundaryPts = parsePoints(siteBoundary).map(([x, y]) => proj(x, y, mode))
-    const boundary = toStr(boundaryPts)
-    /* 2.5D: 지하층 평면 외곽 — 스택된 2D 레이어를 시각화 */
+    /* 2.5D: 지하층 평면 — 구역(다각형)과 무관한 맵 전체 범위의 균일한 데크.
+     * 층 레이어는 구간을 나누지 않고 그리드 범위 그대로 평평하게 깔린다. */
+    const PLANE_RECT: Array<[number, number]> = [[0, 0], [1000, 0], [1000, 640], [0, 640]]
     const subPlanes = iso
       ? (['B2', 'B1'] as FloorId[]).map((lv) => {
-          const pts = boundaryPts.map(([x, y]) => [x, y + LEVEL_DY[lv]] as [number, number])
+          const pts = PLANE_RECT.map(([x, y]) => proj(x, y, mode)).map(
+            ([x, y]) => [x, y + LEVEL_DY[lv]] as [number, number],
+          )
           const left = pts.reduce((a, b) => (b[0] < a[0] ? b : a))
           return {
             id: lv,
             name: floorDefs.find((f) => f.id === lv)!.name,
             pts: toStr(pts),
-            lx: left[0] - 8,
-            ly: left[1] + 4,
+            lx: left[0] + 10,
+            ly: left[1] - 6,
           }
         })
       : []
@@ -274,6 +279,7 @@ const StaticLayers = memo(function StaticLayers({
           const [lx, lyRaw] = at(z.labelX, z.labelY, lv)
           return {
             key: `${z.id}-${lv}`,
+            lv,
             name: z.name,
             floors: z.floors,
             risk,
@@ -319,7 +325,7 @@ const StaticLayers = memo(function StaticLayers({
       p: at(e.x, e.y, 'F1'),
       depth: iso ? LEVEL_DY[e.level ?? 'B1'] : 0,
     }))
-    return { boundary, subPlanes, gridLines, zs, bs, gs, gds, tns, tls, ents }
+    return { subPlanes, gridLines, zs, bs, gs, gds, tns, tls, ents }
   }, [mode, floor])
 
   const iso = mode === '2.5d'
@@ -332,52 +338,79 @@ const StaticLayers = memo(function StaticLayers({
         layers.gridLines.map((pts, i) => (
           <polyline key={i} points={pts} fill="none" stroke="var(--grid-line)" strokeWidth="0.6" vectorEffect="non-scaling-stroke" />
         ))}
-      {/* 2.5D: 지하층 평면 외곽 (B2 → B1 순으로 아래에서 위로) */}
-      {layers.subPlanes.map((p) => (
-        <g key={p.id}>
-          <polygon
-            points={p.pts}
-            fill="var(--series-1)"
-            fillOpacity="0.03"
-            stroke="var(--axis-line)"
-            strokeOpacity="0.7"
-            strokeWidth="1"
-            strokeDasharray="6 5"
-            strokeLinejoin="round"
-            vectorEffect="non-scaling-stroke"
-          />
-          <text x={p.lx} y={p.ly} textAnchor="end" fontSize={fontSize * 0.9} fill="var(--text-muted)">
-            {p.name}
-          </text>
-        </g>
-      ))}
-      {/* 지하 공동구(유틸리티 터널) — 층별 라인: 코리도 몸체 + 점선 중심선 */}
-      {layers.tns.map((t) => (
-        <g key={t.id} opacity={iso ? 0.8 : 1}>
-          <polyline
-            points={t.pts}
-            fill="none"
-            stroke="var(--series-1)"
-            strokeOpacity={t.level === 'B2' ? 0.12 : 0.16}
-            strokeWidth="20"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <title>{`${t.name} · 지하 공동구 (${FLOOR_SHORT[t.level]})`}</title>
-          </polyline>
-          <polyline
-            points={t.pts}
-            fill="none"
-            stroke="var(--series-1)"
-            strokeOpacity="0.6"
-            strokeWidth="1.4"
-            strokeDasharray={t.level === 'B2' ? '3 4' : '7 5'}
-            strokeLinejoin="round"
-            vectorEffect="non-scaling-stroke"
-            pointerEvents="none"
-          />
-        </g>
-      ))}
+      {/* 2.5D: 지하층 평면 외곽 (B2 → B1 순으로 아래에서 위로) — 포커스 층 하이라이트 */}
+      {layers.subPlanes.map((p) => {
+        const focused = p.id === floor
+        return (
+          <g key={p.id}>
+            <polygon
+              points={p.pts}
+              fill={focused ? 'var(--primary)' : 'var(--series-1)'}
+              fillOpacity={focused ? 0.035 : 0.015}
+              stroke={focused ? 'var(--primary)' : 'var(--axis-line)'}
+              strokeOpacity={focused ? 0.8 : 0.45}
+              strokeWidth={focused ? 1.4 : 1}
+              strokeDasharray="6 5"
+              strokeLinejoin="round"
+              vectorEffect="non-scaling-stroke"
+            />
+            <text
+              x={p.lx}
+              y={p.ly}
+              textAnchor="start"
+              fontSize={fontSize * 0.9}
+              fill={focused ? 'var(--primary)' : 'var(--text-muted)'}
+              fontWeight={focused ? 700 : 400}
+              paintOrder="stroke"
+              stroke="var(--page)"
+              strokeWidth="2.5"
+            >
+              {p.name}
+            </text>
+          </g>
+        )
+      })}
+      {/* 지하 공동구(유틸리티 터널) — 층별 라인: 코리도 몸체 + 점선 중심선.
+       * 몸체는 불투명 스트로크를 층 그룹에 모아 그룹 opacity로 합성 —
+       * 분기·코너에서 라인이 겹쳐도 색이 진해지지 않는다. */}
+      {(['B1', 'B2'] as FloorId[]).map((lv) => {
+        const lvTns = layers.tns.filter((t) => t.level === lv)
+        if (!lvTns.length) return null
+        const dim = iso ? 0.8 : 1
+        return (
+          <g key={lv} opacity={iso && lv !== floor ? 0.12 : 1}>
+            <g opacity={(lv === 'B2' ? 0.12 : 0.16) * dim}>
+              {lvTns.map((t) => (
+                <polyline
+                  key={t.id}
+                  points={t.pts}
+                  fill="none"
+                  stroke="var(--series-1)"
+                  strokeWidth="20"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <title>{`${t.name} · 지하 공동구 (${FLOOR_SHORT[t.level]})`}</title>
+                </polyline>
+              ))}
+            </g>
+            <g opacity={0.6 * dim} pointerEvents="none">
+              {lvTns.map((t) => (
+                <polyline
+                  key={t.id}
+                  points={t.pts}
+                  fill="none"
+                  stroke="var(--series-1)"
+                  strokeWidth="1.4"
+                  strokeDasharray={lv === 'B2' ? '3 4' : '7 5'}
+                  strokeLinejoin="round"
+                  vectorEffect="non-scaling-stroke"
+                />
+              ))}
+            </g>
+          </g>
+        )
+      })}
       {layers.tls.map((t) => (
         <text
           key={t.lv}
@@ -386,22 +419,12 @@ const StaticLayers = memo(function StaticLayers({
           textAnchor="middle"
           fontSize={fontSize * 0.85}
           fill="var(--series-1)"
-          opacity="0.85"
+          opacity={iso && t.lv !== floor ? 0.15 : 0.85}
           fontWeight="600"
         >
           {iso ? `지하 공동구 · ${FLOOR_SHORT[t.lv]}` : '지하 공동구'}
         </text>
       ))}
-      <polygon
-        points={layers.boundary}
-        fill="var(--status-serious)"
-        fillOpacity="0.06"
-        stroke="var(--status-serious)"
-        strokeOpacity="0.55"
-        strokeWidth="2"
-        strokeLinejoin="round"
-        vectorEffect="non-scaling-stroke"
-      />
       {layers.zs.map((s) => {
         const zc = RISK_COLOR[s.risk]
         const dash = s.underground ? '5 4' : undefined
@@ -409,6 +432,7 @@ const StaticLayers = memo(function StaticLayers({
         <g
           key={s.key}
           style={{ cursor: 'pointer' }}
+          opacity={iso && s.lv !== floor ? 0.12 : 1}
           onClick={(e) => {
             e.stopPropagation()
             onZoneOpen(s.name)
@@ -491,7 +515,11 @@ const StaticLayers = memo(function StaticLayers({
         )
       })}
       {showDevices && layers.bs.map((b) => (
-        <g key={b.id} transform={`translate(${b.p[0]}, ${b.p[1]}) scale(${km})`}>
+        <g
+          key={b.id}
+          transform={`translate(${b.p[0]}, ${b.p[1]}) scale(${km})`}
+          opacity={iso && b.lv !== floor ? 0.15 : 1}
+        >
           {iso && <line y2={-PIN} stroke="var(--series-4)" strokeOpacity="0.5" strokeWidth="1" />}
           <g transform={iso ? `translate(0, ${-PIN})` : undefined}>
             <rect x="-4.5" y="-4.5" width="9" height="9" rx="2" fill="var(--series-4)" opacity="0.9">
@@ -502,7 +530,11 @@ const StaticLayers = memo(function StaticLayers({
         </g>
       ))}
       {showDevices && layers.gs.map((g) => (
-        <g key={g.id} transform={`translate(${g.p[0]}, ${g.p[1]}) scale(${km})`}>
+        <g
+          key={g.id}
+          transform={`translate(${g.p[0]}, ${g.p[1]}) scale(${km})`}
+          opacity={iso && floor !== 'F1' ? 0.15 : 1}
+        >
           {iso && <line y2={-PIN} stroke="var(--series-1)" strokeOpacity="0.5" strokeWidth="1" />}
           <g transform={iso ? `translate(0, ${-PIN})` : undefined}>
             <circle r="10" fill="var(--series-1)" opacity="0.95">
@@ -515,7 +547,11 @@ const StaticLayers = memo(function StaticLayers({
       ))}
       {/* 고정형 가스검침기 — 마름모 마커, 판정 등급 색상 */}
       {showDevices && layers.gds.map((g) => (
-        <g key={g.id} transform={`translate(${g.p[0]}, ${g.p[1]}) scale(${km})`}>
+        <g
+          key={g.id}
+          transform={`translate(${g.p[0]}, ${g.p[1]}) scale(${km})`}
+          opacity={iso && floor !== 'F1' ? 0.15 : 1}
+        >
           {iso && <line y2={-PIN} stroke={GAS_COLOR[g.lvl]} strokeOpacity="0.5" strokeWidth="1" />}
           <g transform={iso ? `translate(0, ${-PIN})` : undefined}>
             {g.lvl === 'critical' && (
@@ -545,9 +581,14 @@ const StaticLayers = memo(function StaticLayers({
           </g>
         </g>
       ))}
-      {/* 공동구 출입구(수직구·계단실) — 지상 셰브런 + 2.5D 수직구 라인 */}
+      {/* 공동구 출입구(수직구·계단실) — 지상 셰브런 + 2.5D 수직구 라인.
+       * 포커스 층과 무관한 출입구는 투명 처리 */}
       {showDevices && layers.ents.map((e) => (
-        <g key={e.id} transform={`translate(${e.p[0]}, ${e.p[1]})`}>
+        <g
+          key={e.id}
+          transform={`translate(${e.p[0]}, ${e.p[1]})`}
+          opacity={iso && floor !== 'F1' && (e.level ?? 'B1') !== floor ? 0.15 : 1}
+        >
           {e.depth > 0 && (
             <line
               y2={e.depth}
@@ -642,7 +683,12 @@ function WorkerLayer({
           return (
             <g
               key={w.id}
-              style={{ transform: `translate(${x}px, ${y}px)`, transition: 'transform 1s linear', cursor: 'pointer' }}
+              style={{
+                transform: `translate(${x}px, ${y}px)`,
+                transition: 'transform 1s linear',
+                cursor: 'pointer',
+                opacity: iso && wf !== floor ? 0.15 : 1,
+              }}
               onClick={(e) => {
                 e.stopPropagation()
                 onSelect(w.id)
@@ -868,15 +914,30 @@ function ZoneDetailModal({
                 {slabs.filter((s) => s.underground).map((s) => (
                   <polygon key={`pl-${s.lv}`} points={toStr(s.ground)} fill="var(--series-1)" fillOpacity="0.03" />
                 ))}
-                {/* 공동구 — 2.5D는 층 평면에, 2D는 선택 층만 */}
-                {tuns.map((t) => {
-                  const p = toStr(t.path.map(([x, y]) => pj(x, y, t.level)))
+                {/* 공동구 — 2.5D는 층 평면에, 2D는 선택 층만.
+                 * 몸체는 층 그룹 opacity 합성으로 교차부 색 진해짐 방지 */}
+                {(['B1', 'B2'] as FloorId[]).map((lv) => {
+                  const lvTns = tuns.filter((t) => t.level === lv)
+                  if (!lvTns.length) return null
+                  const paths = lvTns.map((t) => ({
+                    id: t.id,
+                    name: t.name,
+                    p: toStr(t.path.map(([x, y]) => pj(x, y, t.level))),
+                  }))
                   return (
-                    <g key={t.id}>
-                      <polyline points={p} fill="none" stroke="var(--series-1)" strokeOpacity="0.16" strokeWidth="20" strokeLinecap="round" strokeLinejoin="round">
-                        <title>{`${t.name} (${FLOOR_SHORT[t.level]})`}</title>
-                      </polyline>
-                      <polyline points={p} fill="none" stroke="var(--series-1)" strokeOpacity="0.55" strokeWidth="1.2" strokeDasharray={t.level === 'B2' ? '3 4' : '6 4'} strokeLinejoin="round" vectorEffect="non-scaling-stroke" pointerEvents="none" />
+                    <g key={lv}>
+                      <g opacity={lv === 'B2' ? 0.12 : 0.16}>
+                        {paths.map((t) => (
+                          <polyline key={t.id} points={t.p} fill="none" stroke="var(--series-1)" strokeWidth="20" strokeLinecap="round" strokeLinejoin="round">
+                            <title>{`${t.name} (${FLOOR_SHORT[lv]})`}</title>
+                          </polyline>
+                        ))}
+                      </g>
+                      <g opacity="0.55" pointerEvents="none">
+                        {paths.map((t) => (
+                          <polyline key={t.id} points={t.p} fill="none" stroke="var(--series-1)" strokeWidth="1.2" strokeDasharray={lv === 'B2' ? '3 4' : '6 4'} strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+                        ))}
+                      </g>
                     </g>
                   )
                 })}
@@ -1238,6 +1299,13 @@ export default function SiteMap() {
   const zoomCenter = (factor: number) =>
     setVb((prev) => zoomVb(prev, factor, prev.x + prev.w / 2, prev.y + prev.h / 2))
 
+  /* 층 위아래 이동 — 2D는 표시 층, 2.5D는 포커스 층 변경 */
+  const stepFloor = (dir: 1 | -1) =>
+    setFloor((f) => {
+      const order: FloorId[] = ['F1', 'B1', 'B2']
+      return order[Math.min(order.length - 1, Math.max(0, order.indexOf(f) + dir))]
+    })
+
   const onPointerDown = (e: React.PointerEvent) => {
     panRef.current = { x0: e.clientX, y0: e.clientY, vb0: vbRef.current, active: true, moved: false }
     /* 주의: 여기서 setPointerCapture를 걸면 click이 래퍼로 리타게팅되어
@@ -1302,12 +1370,8 @@ export default function SiteMap() {
               </button>
             ))}
           </div>
-          {/* 층 선택 (2D 전용 — 2.5D는 전 층을 하나의 스택으로 표시) */}
-          <div
-            className={`flex rounded-lg border border-hairline p-0.5 transition-opacity ${
-              mode === '2.5d' ? 'pointer-events-none opacity-40' : ''
-            }`}
-          >
+          {/* 층 선택 — 2D: 표시 층 / 2.5D: 포커스 층(강조). ▲▼로 위아래 층 이동 */}
+          <div className="flex rounded-lg border border-hairline p-0.5">
             {floorDefs.map((f) => (
               <button
                 key={f.id}
@@ -1315,11 +1379,30 @@ export default function SiteMap() {
                 className={`h-7 cursor-pointer whitespace-nowrap rounded-md px-2.5 text-xs font-semibold transition-colors ${
                   floor === f.id ? 'bg-primary text-white' : 'text-ink-2 hover:bg-surface-2'
                 }`}
-                title={f.name}
+                title={mode === '2.5d' ? `${f.name} 포커스` : f.name}
               >
                 {f.short}
               </button>
             ))}
+            <div className="mx-0.5 w-px self-stretch bg-hairline" />
+            <button
+              onClick={() => stepFloor(-1)}
+              disabled={floor === 'F1'}
+              className={floorStepBtn}
+              aria-label="위층으로"
+              title="위층으로"
+            >
+              <ChevronUp size={14} />
+            </button>
+            <button
+              onClick={() => stepFloor(1)}
+              disabled={floor === 'B2'}
+              className={floorStepBtn}
+              aria-label="아래층으로"
+              title="아래층으로"
+            >
+              <ChevronDown size={14} />
+            </button>
           </div>
           <div className="flex rounded-lg border border-hairline p-0.5">
             {(['2d', '2.5d'] as const).map((m) => (
