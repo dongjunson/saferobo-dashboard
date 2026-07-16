@@ -7,6 +7,8 @@ import {
   Droplets,
   LayoutDashboard,
   Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
   Radio,
   Sun,
   Users,
@@ -80,31 +82,52 @@ function HeaderClock() {
   )
 }
 
-/* SafeRobo DS: 사이드바는 라이트 모드에서도 다크 틴트 유지 */
-function Sidebar() {
+/* SafeRobo DS: 사이드바는 라이트 모드에서도 다크 틴트 유지.
+ * open=false면 아이콘 전용 레일로 접힌다 (토글 상태는 localStorage 보존) */
+function Sidebar({ open, onToggle }: { open: boolean; onToggle: () => void }) {
   return (
-    <aside className="flex w-60 shrink-0 flex-col border-r border-white/5 bg-[#1e293b]">
-      <div className="px-5 pt-5 pb-4">
-        <div className="flex items-center gap-2.5">
-          <img src="/android-chrome-192x192.png" alt="SAFEROBO" className="h-7 w-7 rounded-[8px]" />
-          <span className="text-lg font-extrabold tracking-tight text-white">SAFEROBO</span>
+    <aside
+      className={`flex shrink-0 flex-col border-r border-white/5 bg-[#1e293b] transition-[width] duration-200 ${
+        open ? 'w-60' : 'w-[68px]'
+      }`}
+    >
+      <div className={`pt-5 pb-4 ${open ? 'px-5' : 'px-0'}`}>
+        <div className={`flex items-center ${open ? 'justify-between gap-2' : 'flex-col gap-2.5'}`}>
+          <div className={`flex items-center ${open ? 'gap-2.5' : ''}`}>
+            <img src="/android-chrome-192x192.png" alt="SAFEROBO" className="h-7 w-7 rounded-[8px]" />
+            {open && <span className="text-lg font-extrabold tracking-tight text-white">SAFEROBO</span>}
+          </div>
+          <button
+            onClick={onToggle}
+            className="flex size-8 cursor-pointer items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-white/5 hover:text-slate-100"
+            aria-label={open ? '메뉴 접기' : '메뉴 펼치기'}
+            title={open ? '메뉴 접기' : '메뉴 펼치기'}
+          >
+            {open ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />}
+          </button>
         </div>
-        <p className="mt-2 text-xs text-slate-500">스마트 안전관제</p>
+        {open && <p className="mt-2 text-xs text-slate-500">스마트 안전관제</p>}
       </div>
-      <nav className="flex-1 overflow-y-auto px-3">
+      <nav className={`flex-1 overflow-y-auto ${open ? 'px-3' : 'px-2.5'}`}>
         {NAV_GROUPS.map((g, i) => (
           <div key={i} className={i > 0 ? 'mt-5' : ''}>
-            {g.title && (
-              <p className="mb-2 px-4 text-xs font-bold text-slate-500">{g.title}</p>
-            )}
+            {g.title &&
+              (open ? (
+                <p className="mb-2 px-4 text-xs font-bold text-slate-500">{g.title}</p>
+              ) : (
+                <div className="mx-2 mb-2 border-t border-white/10" />
+              ))}
             <div className="space-y-1">
               {g.items.map(({ to, label, icon }) => (
                 <NavLink
                   key={to}
                   to={to}
                   end={to === '/'}
+                  title={label}
                   className={({ isActive }) =>
-                    `flex w-full items-center gap-3.5 rounded-[14px] px-4 py-3 min-h-11 text-base font-medium transition-colors ${
+                    `flex w-full items-center rounded-[14px] py-3 min-h-11 text-base font-medium transition-colors ${
+                      open ? 'gap-3.5 px-4' : 'justify-center px-0'
+                    } ${
                       isActive
                         ? 'bg-[#3b82f6] text-white shadow-sm'
                         : 'text-slate-400 hover:bg-white/5 hover:text-slate-100'
@@ -112,24 +135,29 @@ function Sidebar() {
                   }
                 >
                   <span className="h-5 w-5 shrink-0">{icon}</span>
-                  {label}
+                  {open && label}
                 </NavLink>
               ))}
             </div>
           </div>
         ))}
       </nav>
-      <div className="border-t border-white/5 p-4">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#3b82f6] font-bold text-white">
+      <div className={`border-t border-white/5 ${open ? 'p-4' : 'p-3'}`}>
+        <div
+          className={`flex items-center ${open ? 'gap-3' : 'justify-center'}`}
+          title="김안전 · 안전관리자 · 군포 하수도 사업소"
+        >
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#3b82f6] font-bold text-white">
             김
           </div>
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold leading-tight text-slate-100">김안전</p>
-            <p className="mt-0.5 truncate text-xs leading-tight text-slate-500">
-              안전관리자 · 군포 하수도 사업소
-            </p>
-          </div>
+          {open && (
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold leading-tight text-slate-100">김안전</p>
+              <p className="mt-0.5 truncate text-xs leading-tight text-slate-500">
+                안전관리자 · 군포 하수도 사업소
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </aside>
@@ -140,6 +168,7 @@ export default function Layout() {
   const [theme, setTheme] = useState<'dark' | 'light'>(
     () => (localStorage.getItem('theme') as 'dark' | 'light') ?? 'dark',
   )
+  const [navOpen, setNavOpen] = useState(() => localStorage.getItem('nav-open') !== '0')
   const location = useLocation()
   const [title, subtitle] = PAGE_META[location.pathname] ?? ['', '']
   const w = siteInfo.weather
@@ -149,9 +178,15 @@ export default function Layout() {
     localStorage.setItem('theme', theme)
   }, [theme])
 
+  const toggleNav = () =>
+    setNavOpen((v) => {
+      localStorage.setItem('nav-open', v ? '0' : '1')
+      return !v
+    })
+
   return (
     <div className="flex h-full bg-page">
-      <Sidebar />
+      <Sidebar open={navOpen} onToggle={toggleNav} />
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="relative z-40 flex min-h-[72px] shrink-0 items-center justify-between border-b border-hairline bg-surface-1/80 px-5 py-3 backdrop-blur-md">
           <div className="min-w-0">
