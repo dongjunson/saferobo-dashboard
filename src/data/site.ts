@@ -14,7 +14,7 @@ export const controlKpi = {
 }
 
 export const siteInfo = {
-  name: '여수 LNG 3부두 현장',
+  name: '경기도 군포 하수도 사업소',
   weather: { condition: '흐림', temp: 31.3, feel: 32.6, wind: 2.1, humidity: 70, pm10: 12, pm25: 8 },
 }
 
@@ -38,6 +38,9 @@ export const zones: Zone[] = [
   { id: 'Z5', name: '금수동', points: '650,180 790,180 790,270 650,270', labelX: 720, labelY: 229 },
   { id: 'Z6', name: '실험동', points: '440,460 570,460 570,545 440,545', labelX: 505, labelY: 507 },
   { id: 'Z7', name: '전기실', points: '660,400 780,400 780,470 660,470', labelX: 720, labelY: 439 },
+  { id: 'Z8', name: '소화조동', points: '820,190 935,190 935,290 820,290', labelX: 877, labelY: 244 },
+  { id: 'Z9', name: '약품투입동', points: '830,340 940,340 940,410 830,410', labelX: 885, labelY: 379 },
+  { id: 'Z10', name: '슬러지건조동', points: '600,480 730,480 730,560 600,560', labelX: 665, labelY: 524 },
 ]
 
 export interface MapPoint {
@@ -47,6 +50,35 @@ export interface MapPoint {
   zone: string
 }
 
+/* ── 지하 공동구(유틸리티 터널) — 주요 동을 잇는 지하 코리도 ──────────
+ * path는 지도 좌표 폴리라인. 출입구는 각 동 접속부의 수직구/계단실. */
+export interface TunnelSegment {
+  id: string
+  name: string
+  path: Array<[number, number]>
+}
+
+export const utilityTunnels: TunnelSegment[] = [
+  { id: 'UT-A', name: '공동구 A라인 · 하수유입동—관리동', path: [[280, 300], [405, 300], [405, 352], [420, 352]] },
+  { id: 'UT-B', name: '공동구 B라인 · 탈수기동 연결', path: [[405, 300], [405, 232]] },
+  { id: 'UT-C', name: '공동구 C라인 · 축산전처리동 연결', path: [[405, 352], [405, 435], [322, 435]] },
+  { id: 'UT-C2', name: '공동구 C라인 지선 · 실험동 연결', path: [[405, 435], [405, 505], [438, 505]] },
+  { id: 'UT-D', name: '공동구 D라인 · 관리동—전기실', path: [[580, 352], [660, 352], [660, 435]] },
+  { id: 'UT-E', name: '공동구 E라인 · 약품투입동—소화조동', path: [[660, 352], [830, 352], [830, 292]] },
+]
+
+/** 공동구 출입구(수직구·계단실) */
+export const tunnelEntrances: MapPoint[] = [
+  { id: 'ENT-01', x: 280, y: 300, zone: '하수유입동' },
+  { id: 'ENT-02', x: 405, y: 232, zone: '탈수기동' },
+  { id: 'ENT-03', x: 420, y: 352, zone: '관리동' },
+  { id: 'ENT-04', x: 322, y: 435, zone: '축산전처리동' },
+  { id: 'ENT-05', x: 438, y: 505, zone: '실험동' },
+  { id: 'ENT-06', x: 660, y: 435, zone: '전기실' },
+  { id: 'ENT-07', x: 830, y: 352, zone: '약품투입동' },
+  { id: 'ENT-08', x: 830, y: 292, zone: '소화조동' },
+]
+
 export const gateways: MapPoint[] = [
   { id: 'GW-0021', x: 132, y: 232, zone: '하수유입동' },
   { id: 'GW-0018', x: 458, y: 152, zone: '탈수기동' },
@@ -54,6 +86,7 @@ export const gateways: MapPoint[] = [
   { id: 'GW-0022', x: 568, y: 312, zone: '관리동' },
   { id: 'GW-0027', x: 778, y: 192, zone: '금수동' },
   { id: 'GW-0031', x: 672, y: 458, zone: '전기실' },
+  { id: 'GW-0042', x: 928, y: 202, zone: '소화조동' },
 ]
 
 export const mapBeacons: MapPoint[] = [
@@ -71,6 +104,22 @@ export const mapBeacons: MapPoint[] = [
   { id: 'BC-1201', x: 465, y: 480, zone: '실험동' },
   { id: 'BC-1202', x: 545, y: 525, zone: '실험동' },
   { id: 'BC-1221', x: 700, y: 420, zone: '전기실' },
+  { id: 'BC-1241', x: 850, y: 215, zone: '소화조동' },
+  { id: 'BC-1242', x: 915, y: 270, zone: '소화조동' },
+  { id: 'BC-1261', x: 855, y: 365, zone: '약품투입동' },
+  { id: 'BC-1262', x: 925, y: 395, zone: '약품투입동' },
+  { id: 'BC-1281', x: 620, y: 500, zone: '슬러지건조동' },
+  { id: 'BC-1282', x: 705, y: 540, zone: '슬러지건조동' },
+  /* 지하 공동구 내부 비콘 — 라인별 위치 추적용 */
+  { id: 'BC-1301', x: 345, y: 300, zone: '공동구 A라인' },
+  { id: 'BC-1302', x: 405, y: 262, zone: '공동구 B라인' },
+  { id: 'BC-1303', x: 405, y: 400, zone: '공동구 C라인' },
+  { id: 'BC-1304', x: 360, y: 435, zone: '공동구 C라인' },
+  { id: 'BC-1305', x: 405, y: 478, zone: '공동구 C라인' },
+  { id: 'BC-1306', x: 620, y: 352, zone: '공동구 D라인' },
+  { id: 'BC-1307', x: 660, y: 395, zone: '공동구 D라인' },
+  { id: 'BC-1308', x: 745, y: 352, zone: '공동구 E라인' },
+  { id: 'BC-1309', x: 830, y: 320, zone: '공동구 E라인' },
 ]
 
 /* ── 작업자 실시간 위치: 비콘 웨이포인트를 따라 이동 ─────────────── */
@@ -125,15 +174,22 @@ export function workerPosition(w: LiveWorker, tick: number): [number, number] {
   return w.path[0]
 }
 
-/* ── 고정가스검침기 (5종 복합가스: O₂ · H₂S · CO · NH₃ · CH₄) ─────── */
-export interface GasDetector {
-  id: string
-  name: string
+/* ── 고정형 가스검침기 (5종 복합가스: O₂ · H₂S · CO · NH₃ · CH₄) ───
+ * 구역(비콘 기반 작업 구역)에 설치되어 지도에 표시된다. */
+export interface GasReading {
   o2: number
   h2s: number
   co: number
   nh3: number
   ch4: number
+}
+
+export interface GasDetector extends GasReading {
+  id: string
+  name: string
+  x: number
+  y: number
+  zone: string
 }
 
 /** 수집 항목 정의 — 스파크라인 범위(min/max)·시뮬레이션 흔들림(jitter) 포함 */
@@ -147,13 +203,106 @@ export const gasMetrics = [
 export type GasMetricKey = (typeof gasMetrics)[number]['key']
 
 export const gasDetectors: GasDetector[] = [
-  { id: 'GAS-01', name: '하수유입동 01 고정가스검침기', o2: 20.8, h2s: 0.0, co: 1.2, nh3: 3.5, ch4: 2.1 },
-  { id: 'GAS-02', name: '탈수기동 02 고정가스검침기', o2: 21.0, h2s: 0.0, co: 0.8, nh3: 5.2, ch4: 1.4 },
-  { id: 'GAS-03', name: '축산전처리동 03 고정가스검침기', o2: 21.0, h2s: 0.2, co: 1.5, nh3: 8.4, ch4: 3.2 },
-  { id: 'GAS-04', name: '소화조동 04 고정가스검침기', o2: 20.9, h2s: 0.1, co: 0.6, nh3: 2.1, ch4: 6.8 },
-  { id: 'GAS-05', name: '약품투입동 05 고정가스검침기', o2: 21.2, h2s: 0.3, co: 0.4, nh3: 1.2, ch4: 0.5 },
-  { id: 'GAS-06', name: '슬러지건조동 06 고정가스검침기', o2: 20.6, h2s: 1.6, co: 2.2, nh3: 12.5, ch4: 4.6 },
+  { id: 'GAS-01', name: '하수유입동 01 고정가스검침기', x: 265, y: 237, zone: '하수유입동', o2: 20.8, h2s: 0.0, co: 1.2, nh3: 3.5, ch4: 2.1 },
+  { id: 'GAS-02', name: '탈수기동 02 고정가스검침기', x: 345, y: 215, zone: '탈수기동', o2: 21.0, h2s: 0.0, co: 0.8, nh3: 5.2, ch4: 1.4 },
+  { id: 'GAS-03', name: '축산전처리동 03 고정가스검침기', x: 255, y: 385, zone: '축산전처리동', o2: 21.0, h2s: 0.2, co: 1.5, nh3: 8.4, ch4: 3.2 },
+  { id: 'GAS-04', name: '소화조동 04 고정가스검침기', x: 880, y: 230, zone: '소화조동', o2: 20.9, h2s: 0.1, co: 0.6, nh3: 2.1, ch4: 6.8 },
+  { id: 'GAS-05', name: '약품투입동 05 고정가스검침기', x: 890, y: 355, zone: '약품투입동', o2: 21.2, h2s: 0.3, co: 0.4, nh3: 1.2, ch4: 0.5 },
+  { id: 'GAS-06', name: '슬러지건조동 06 고정가스검침기', x: 668, y: 498, zone: '슬러지건조동', o2: 20.6, h2s: 1.6, co: 2.2, nh3: 12.5, ch4: 4.6 },
 ]
+
+/* ── 이동형 가스검침기 — 작업자가 휴대, 이동하며 구역 환경 데이터 취합 ── */
+export interface PortableGasDetector extends GasReading {
+  id: string
+  workerId: number
+}
+
+export const portableGasDetectors: PortableGasDetector[] = [
+  { id: 'PGAS-01', workerId: 1, o2: 20.9, h2s: 0.2, co: 21.5, nh3: 4.1, ch4: 3.8 },
+  { id: 'PGAS-02', workerId: 2, o2: 20.8, h2s: 0.4, co: 1.8, nh3: 6.2, ch4: 1.1 },
+  { id: 'PGAS-03', workerId: 4, o2: 19.2, h2s: 2.4, co: 8.5, nh3: 18.2, ch4: 5.4 },
+  { id: 'PGAS-04', workerId: 6, o2: 21.1, h2s: 0.1, co: 0.9, nh3: 1.8, ch4: 0.7 },
+  { id: 'PGAS-05', workerId: 7, o2: 20.9, h2s: 0.0, co: 1.1, nh3: 0.9, ch4: 0.4 },
+]
+
+/* ── 가스 농도 판정 기준
+ * O₂ 정상범위 19.5~23.5% / H₂S 1·2ppm / CO 20·30ppm / NH₃ 25·35ppm / CH₄ 10·20%LEL */
+export type GasLevel = 'good' | 'warning' | 'critical'
+
+export function gasSeverity(cur: GasReading): GasLevel {
+  if (cur.o2 < 19.5 || cur.o2 > 23.5 || cur.h2s >= 2 || cur.co >= 30 || cur.nh3 >= 35 || cur.ch4 >= 20)
+    return 'critical'
+  if (cur.h2s >= 1 || cur.co >= 20 || cur.nh3 >= 25 || cur.ch4 >= 10) return 'warning'
+  return 'good'
+}
+
+/** 판정을 유발한 항목(가장 심한 것) — 정상이면 null */
+export function gasDriver(cur: GasReading): { label: string; unit: string; value: number } | null {
+  const level = gasSeverity(cur)
+  if (level === 'good') return null
+  const checks: Array<[GasMetricKey, boolean, boolean]> = [
+    ['o2', cur.o2 < 19.5 || cur.o2 > 23.5, false],
+    ['h2s', cur.h2s >= 2, cur.h2s >= 1],
+    ['co', cur.co >= 30, cur.co >= 20],
+    ['nh3', cur.nh3 >= 35, cur.nh3 >= 25],
+    ['ch4', cur.ch4 >= 20, cur.ch4 >= 10],
+  ]
+  const hit = checks.find(([, crit, warn]) => (level === 'critical' ? crit : warn))
+  if (!hit) return null
+  const m = gasMetrics.find((g) => g.key === hit[0])!
+  return { label: m.label, unit: m.unit, value: cur[hit[0]] }
+}
+
+/* ── 구역별 위험도 평가 — 비콘 기반 작업 구역에 매핑된
+ * 고정형 검침기 + (구역 내 작업자가 휴대한) 이동형 검침기 데이터로 판정 ── */
+export interface ZoneRisk {
+  zone: string
+  level: GasLevel
+  /** 판정 근거 — 예: 'H₂S 2.4 PPM · 이동형 PGAS-03(최성훈)' */
+  cause: string | null
+  fixedCount: number
+  portableCount: number
+  workerCount: number
+}
+
+const LEVEL_ORDER: Record<GasLevel, number> = { critical: 0, warning: 1, good: 2 }
+
+export function assessZoneRisks(): ZoneRisk[] {
+  return zones
+    .map((z) => {
+      const sources: Array<{ label: string; cur: GasReading }> = []
+      const fixed = gasDetectors.filter((g) => g.zone === z.name)
+      fixed.forEach((g) => sources.push({ label: `고정형 ${g.id}`, cur: g }))
+      const inZone = liveWorkers.filter((w) => w.outTime === null && w.zone === z.name)
+      const portables = portableGasDetectors.filter((p) =>
+        inZone.some((w) => w.id === p.workerId),
+      )
+      portables.forEach((p) => {
+        const w = liveWorkers.find((lw) => lw.id === p.workerId)!
+        sources.push({ label: `이동형 ${p.id}(${w.name})`, cur: p })
+      })
+
+      let level: GasLevel = 'good'
+      let cause: string | null = null
+      for (const s of sources) {
+        const lv = gasSeverity(s.cur)
+        if (LEVEL_ORDER[lv] < LEVEL_ORDER[level]) {
+          level = lv
+          const d = gasDriver(s.cur)
+          cause = d ? `${d.label} ${d.value.toFixed(1)} ${d.unit} · ${s.label}` : null
+        }
+      }
+      return {
+        zone: z.name,
+        level,
+        cause,
+        fixedCount: fixed.length,
+        portableCount: portables.length,
+        workerCount: inZone.length,
+      }
+    })
+    .sort((a, b) => LEVEL_ORDER[a.level] - LEVEL_ORDER[b.level])
+}
 
 /** 초기 스파크라인 히스토리 생성 */
 export function genGasHistory(base: number, jitter: number, n = 60): number[] {
@@ -202,7 +351,7 @@ export const beaconRows: BeaconRow[] = mapBeacons.map((b, i) => ({
   name: b.id,
   major: 100 + Math.floor(i / 4),
   minor: 1000 + i,
-  space: b.zone === '실험동' ? '지하층' : '지상층',
+  space: b.zone === '실험동' || b.zone.startsWith('공동구') ? '지하층' : '지상층',
   zone: b.zone,
   use: true,
   scanDt: '2026.07.14 (13:4' + (i % 10) + ')',

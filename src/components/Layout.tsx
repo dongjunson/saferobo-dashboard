@@ -60,7 +60,7 @@ function HeaderClock() {
   const refreshLeft = REFRESH_INTERVAL - (Math.floor(now.getTime() / 1000) % REFRESH_INTERVAL)
   return (
     <>
-      <span className="text-sm text-muted" style={{ fontVariantNumeric: 'tabular-nums' }}>
+      <span className="whitespace-nowrap text-sm text-muted" style={{ fontVariantNumeric: 'tabular-nums' }}>
         {now.toLocaleString('ko-KR', {
           month: 'long',
           day: 'numeric',
@@ -71,7 +71,7 @@ function HeaderClock() {
         })}
       </span>
       <span
-        className="rounded-[8px] bg-surface-2 px-2 py-1 text-xs text-ink-2"
+        className="whitespace-nowrap rounded-[8px] bg-surface-2 px-2 py-1 text-xs text-ink-2"
         style={{ fontVariantNumeric: 'tabular-nums' }}
       >
         새로고침 : {refreshLeft}
@@ -129,7 +129,7 @@ function Sidebar() {
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold leading-tight text-slate-100">김안전</p>
             <p className="mt-0.5 truncate text-xs leading-tight text-slate-500">
-              안전관리자 · 여수 LNG 3부두
+              안전관리자 · 군포 하수도 사업소
             </p>
           </div>
         </div>
@@ -157,12 +157,12 @@ export default function Layout() {
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="relative z-40 flex min-h-[72px] shrink-0 items-center justify-between border-b border-hairline bg-surface-1/80 px-5 py-3 backdrop-blur-md">
           <div className="min-w-0">
-            <h1 className="text-lg font-semibold leading-tight text-ink">{title}</h1>
-            {subtitle && <p className="mt-0.5 text-sm text-muted">{subtitle}</p>}
+            <h1 className="truncate text-lg font-semibold leading-tight text-ink">{title}</h1>
+            {subtitle && <p className="mt-0.5 truncate text-sm text-muted">{subtitle}</p>}
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex shrink-0 items-center gap-3">
             {/* 현장 기후 (레거시 헤더 날씨 클러스터) */}
-            <div className="hidden items-center gap-3 rounded-[10px] border border-hairline px-3 py-1.5 text-sm text-ink-2 xl:flex">
+            <div className="hidden items-center gap-3 whitespace-nowrap rounded-[10px] border border-hairline px-3 py-1.5 text-sm text-ink-2 xl:flex">
               <span className="flex items-center gap-1.5">
                 <CloudSun size={16} className="text-s3" />
                 {w.condition} {w.temp}°C
@@ -179,7 +179,7 @@ export default function Layout() {
                 PM10 <span style={{ fontVariantNumeric: 'tabular-nums' }}>{w.pm10}</span>
               </span>
             </div>
-            <span className="flex items-center gap-2 text-sm text-ink-2">
+            <span className="flex items-center gap-2 whitespace-nowrap text-sm text-ink-2">
               <span className="relative flex size-2">
                 <span className="absolute inline-flex size-full animate-ping rounded-full bg-good opacity-60" />
                 <span className="relative inline-flex size-2 rounded-full bg-good" />

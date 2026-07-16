@@ -96,9 +96,15 @@ body,
   height: 100%;
 }
 
+/* 데스크톱 고정 레이아웃 최소 폭 — 이보다 좁은 창(모바일 포함)은 가로 스크롤 */
+#root {
+  min-width: 1280px;
+}
+
 body {
   margin: 0;
-  overflow: hidden; /* main만 스크롤 — DS 레이아웃 규칙 */
+  overflow-x: auto; /* min-width 미만 창에서 가로 스크롤 허용 */
+  overflow-y: hidden; /* 세로는 main만 스크롤 — DS 레이아웃 규칙 */
   background: var(--page);
   color: var(--text-primary);
   font-family: 'IBM Plex Sans KR', -apple-system, BlinkMacSystemFont, system-ui,

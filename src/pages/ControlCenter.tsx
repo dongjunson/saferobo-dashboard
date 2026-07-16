@@ -5,18 +5,21 @@ import SiteMap from '../components/SiteMap'
 import Sparkline from '../components/Sparkline'
 import { Card, SeverityBadge } from '../components/ui'
 import {
+  assessZoneRisks,
   beaconRows,
   controlKpi,
   emergencyRows,
   gasDetectors,
   gasMetrics,
+  gasSeverity,
   genGasHistory,
   liveWorkers,
+  portableGasDetectors,
   trackerRows,
   workItems,
   zoneAlarmStats,
 } from '../data/site'
-import type { GasMetricKey } from '../data/site'
+import type { GasLevel, GasMetricKey } from '../data/site'
 import { sensors } from '../data/mock'
 
 /** 검침기별 5종 가스 히스토리 (스파크라인용 최근 60초) */
@@ -129,16 +132,20 @@ function RefreshCountdown() {
 const KpiBoard = memo(function KpiBoard() {
   return (
     <Section id="kpi" title="안전 KPI" right={<RefreshCountdown />}>
-      <div className="flex divide-x divide-hairline pb-4 pt-1">
+      <div className="@container flex divide-x divide-hairline pb-4 pt-1">
         {KPI_GROUPS.map((g) => (
-          <div key={g.title} className="flex min-w-0 flex-1 flex-col px-4">
+          <div
+            key={g.title}
+            className="flex min-w-0 flex-col px-4"
+            style={{ flexGrow: g.boxes.length, flexBasis: 0 }}
+          >
             <p className="truncate text-xs font-semibold text-muted">{g.title}</p>
             <div className="mt-3 flex flex-1 items-center">
               {g.boxes.map((b) => (
                 <div key={b.name} className="flex min-w-0 flex-1 flex-col items-center gap-1">
                   <span className="max-w-full truncate text-xs text-ink-2">{b.name}</span>
                   <span
-                    className={`text-3xl font-bold leading-tight ${
+                    className={`text-xl font-bold leading-tight @[540px]:text-2xl @[720px]:text-3xl ${
                       b.alert && b.value > 0
                         ? b.alert === 'critical'
                           ? 'text-critical'
@@ -187,15 +194,6 @@ function GasCard({ name, hist }: { name: string; hist: GasHists }) {
   )
 }
 
-/* 가스 농도 → 상태 등급
- * O₂ 정상범위 19.5~23.5% / H₂S 1·2ppm / CO 20·30ppm / NH₃ 25·35ppm / CH₄ 10·20%LEL */
-function gasSeverity(cur: Record<GasMetricKey, number>): 'good' | 'warning' | 'critical' {
-  if (cur.o2 < 19.5 || cur.o2 > 23.5 || cur.h2s >= 2 || cur.co >= 30 || cur.nh3 >= 35 || cur.ch4 >= 20)
-    return 'critical'
-  if (cur.h2s >= 1 || cur.co >= 20 || cur.nh3 >= 25 || cur.ch4 >= 10) return 'warning'
-  return 'good'
-}
-
 /* 전체보기 대시보드 — 모든 검침기를 페이지네이션 없이 큰 카드로 노출 */
 function GasFullscreen({
   hists,
@@ -216,7 +214,7 @@ function GasFullscreen({
     <div className="fixed inset-0 z-50 flex flex-col gap-3 bg-page p-5">
       <div className="flex shrink-0 items-center justify-between">
         <div className="flex items-baseline gap-2">
-          <h2 className="text-lg font-semibold text-ink">고정가스 검침기 전체 현황</h2>
+          <h2 className="text-lg font-semibold text-ink">고정형 가스검침기 전체 현황</h2>
           <span className="text-xs text-muted">{gasDetectors.length}대 · 1초 갱신</span>
         </div>
         <div className="flex items-center gap-3">
@@ -316,7 +314,7 @@ function GasPanel() {
     <>
       <Section
         id="gas"
-        title={`고정가스 검침기 (${gasDetectors.length})`}
+        title={`고정형 가스검침기 (${gasDetectors.length})`}
         right={
           <>
             {time && <span className="font-mono text-[10px] text-muted">{time}</span>}
@@ -484,6 +482,40 @@ const BeaconTable = memo(function BeaconTable() {
   )
 })
 
+/* ═══ 이동형 가스검침기 — 작업자가 휴대, 이동하며 구역 환경 데이터 취합 ═══ */
+const PortableGasTable = memo(function PortableGasTable() {
+  return (
+    <table className="w-full min-w-[860px]">
+      <thead className="sticky top-0 bg-surface-1">
+        <tr className="border-b border-hairline">
+          {['이름', '휴대 작업자', '작업 구역', 'O₂ (%)', 'H₂S (PPM)', 'CO (PPM)', 'NH₃ (PPM)', 'CH₄ (%LEL)', '판정', '수신 시간'].map((h) => (
+            <th key={h} className={th}>{h}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-hairline text-ink-2">
+        {portableGasDetectors.map((p) => {
+          const w = liveWorkers.find((lw) => lw.id === p.workerId)
+          return (
+            <tr key={p.id} className="hover:bg-surface-2/40">
+              <td className={`${td} font-mono text-ink`}>{p.id}</td>
+              <td className={td}>{w?.name ?? '-'}</td>
+              <td className={td}>{w?.zone ?? '-'}</td>
+              <td className={`${td} font-mono`}>{p.o2.toFixed(1)}</td>
+              <td className={`${td} font-mono`}>{p.h2s.toFixed(1)}</td>
+              <td className={`${td} font-mono`}>{p.co.toFixed(1)}</td>
+              <td className={`${td} font-mono`}>{p.nh3.toFixed(1)}</td>
+              <td className={`${td} font-mono`}>{p.ch4.toFixed(1)}</td>
+              <td className={td}><SeverityBadge severity={gasSeverity(p)} /></td>
+              <td className={`${td} font-mono text-muted`}>2026.07.14 (13:45)</td>
+            </tr>
+          )
+        })}
+      </tbody>
+    </table>
+  )
+})
+
 const TrackerTable = memo(function TrackerTable() {
   return (
     <table className="w-full min-w-[720px]">
@@ -511,11 +543,12 @@ const TrackerTable = memo(function TrackerTable() {
 })
 
 /* ═══ 탭 그리드 (탭 전환만 이 컴포넌트 안에서 처리) ═══ */
-const TABS = ['작업자', '작업 목록', '고정형 비콘', '트래커'] as const
+const TABS = ['작업자', '이동형 검침기', '작업 목록', '고정형 비콘', '트래커'] as const
 type Tab = (typeof TABS)[number]
 
 const TAB_COUNTS: Record<Tab, number> = {
   작업자: liveWorkers.length,
+  '이동형 검침기': portableGasDetectors.length,
   '작업 목록': workItems.length,
   '고정형 비콘': beaconRows.length,
   트래커: trackerRows.length,
@@ -525,22 +558,25 @@ function TabGrid() {
   const [tab, setTab] = useState<Tab>('작업자')
   return (
     <Card className="flex min-h-0 flex-1 flex-col !p-0">
-      <div className="flex items-center gap-1 border-b border-hairline px-3 py-2">
+      <div className="flex items-center gap-1 overflow-x-auto border-b border-hairline px-3 py-2">
         {TABS.map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`h-9 cursor-pointer rounded-lg px-3.5 text-[13px] font-medium transition-colors ${
+            className={`h-9 shrink-0 cursor-pointer whitespace-nowrap rounded-lg px-3.5 text-[13px] font-medium transition-colors ${
               tab === t ? 'bg-primary text-white' : 'text-ink-2 hover:bg-surface-2'
             }`}
           >
             {t}
           </button>
         ))}
-        <span className="ml-auto text-[11px] text-muted">Results : {TAB_COUNTS[tab]}</span>
+        <span className="ml-auto shrink-0 whitespace-nowrap pl-2 text-[11px] text-muted">
+          Results : {TAB_COUNTS[tab]}
+        </span>
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
         {tab === '작업자' && <WorkerTable />}
+        {tab === '이동형 검침기' && <PortableGasTable />}
         {tab === '작업 목록' && <WorkListTable />}
         {tab === '고정형 비콘' && <BeaconTable />}
         {tab === '트래커' && <TrackerTable />}
@@ -549,9 +585,17 @@ function TabGrid() {
   )
 }
 
+/* 구역 위험도 등급 칩 — 환경(가스) 데이터 판정 결과 */
+const RISK_META: Record<GasLevel, { label: string; cls: string }> = {
+  critical: { label: '위험', cls: 'bg-critical/10 text-critical border-critical/35' },
+  warning: { label: '주의', cls: 'bg-warning/10 text-warning border-warning/35' },
+  good: { label: '정상', cls: 'bg-good/10 text-good border-good/35' },
+}
+
 /* ═══ 하단 패널 — 정적, memo 격리 ═══ */
 const BottomPanels = memo(function BottomPanels() {
   const lowSensors = sensors.filter((s) => s.state !== '정상')
+  const zoneRisks = assessZoneRisks()
   const total = zoneAlarmStats.reduce((a, b) => a + b.count, 0)
   const colors = ['var(--series-1)', 'var(--series-3)', 'var(--series-4)', 'var(--series-5)']
   const R = 40
@@ -560,7 +604,47 @@ const BottomPanels = memo(function BottomPanels() {
 
   return (
     <Section id="bottom" title="상세 현황 패널" card={false}>
-      <div className="grid h-[230px] grid-cols-1 gap-3 xl:grid-cols-3">
+      <div className="grid h-[230px] grid-cols-1 gap-3 xl:grid-cols-4">
+      <Card
+        title="구역별 위험도"
+        action={
+          <span className="whitespace-nowrap text-[10px] text-muted">고정형·이동형 검침 기반</span>
+        }
+        className="flex flex-col overflow-hidden !pb-2"
+      >
+        <div className="min-h-0 flex-1 overflow-auto">
+          <table className="w-full">
+            <thead className="sticky top-0 bg-surface-1">
+              <tr className="border-b border-hairline">
+                {['작업 구역', '판정', '판정 근거'].map((h) => (
+                  <th key={h} className={th}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-hairline text-ink-2">
+              {zoneRisks.map((r) => (
+                <tr key={r.zone} className="hover:bg-surface-2/40">
+                  <td className={`${td} font-medium text-ink`}>{r.zone}</td>
+                  <td className={td}>
+                    <span
+                      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${RISK_META[r.level].cls}`}
+                    >
+                      {RISK_META[r.level].label}
+                    </span>
+                  </td>
+                  <td
+                    className={`${td} max-w-44 truncate ${r.level === 'good' ? 'text-muted' : ''}`}
+                    title={r.cause ?? undefined}
+                  >
+                    {r.cause ?? `고정 ${r.fixedCount} · 이동 ${r.portableCount} · 작업자 ${r.workerCount}`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
       <Card title="배터리 및 상태 이상 IoT 센서 현황" className="flex flex-col overflow-hidden !pb-2">
         <div className="min-h-0 flex-1 overflow-auto">
           {lowSensors.length ? (

@@ -9,16 +9,39 @@ import {
   X,
 } from 'lucide-react'
 import {
+  assessZoneRisks,
+  gasDetectors,
+  gasSeverity,
   gateways,
   liveWorkers,
   mapBeacons,
+  portableGasDetectors,
   siteBoundary,
+  tunnelEntrances,
+  utilityTunnels,
   workerPosition,
   zones,
+  type GasLevel,
   type LiveWorker,
 } from '../data/site'
 
 type ViewMode = '2d' | '2.5d'
+
+/* ── 구역 위험도(환경 데이터 기반) — 정적 목업 데이터라 모듈 단위 1회 평가 ── */
+const ZONE_RISK = new Map(assessZoneRisks().map((r) => [r.zone, r]))
+const RISK_COLOR: Record<GasLevel, string> = {
+  good: 'var(--series-4)',
+  warning: 'var(--status-warning)',
+  critical: 'var(--status-critical)',
+}
+const GAS_COLOR: Record<GasLevel, string> = {
+  good: 'var(--series-3)',
+  warning: 'var(--status-warning)',
+  critical: 'var(--status-critical)',
+}
+const RISK_LABEL: Record<GasLevel, string> = { good: '', warning: '▲ 주의', critical: '▲ 위험' }
+const PORTABLE_BY_WORKER = new Map(portableGasDetectors.map((p) => [p.workerId, p]))
+
 interface ViewBox {
   x: number
   y: number
@@ -54,14 +77,14 @@ const toStr = (pts: Array<[number, number]>) =>
   pts.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ')
 
 /* ── 실제 지도 타일 배경 (2D 전용) ────────────────────────────────────
- * 로컬 좌표(1unit ≈ 1.25m)를 현장 앵커(여수 광양만) 기준 Web Mercator로
+ * 로컬 좌표(1unit ≈ 1.25m)를 현장 앵커(경기 군포) 기준 Web Mercator로
  * 변환해 타일을 SVG <image>로 깐다. viewBox 줌/팬과 자동 정합. */
 type BgKind = 'none' | 'map' | 'sat'
 
 const WORLD = 40075016.686
 const R_MERC = 6378137
 const M_PER_UNIT = 1.25
-const ANCHOR = { lat: 34.8492, lng: 127.652 } // 여수 LNG 부두 인근
+const ANCHOR = { lat: 37.3503, lng: 126.9401 } // 군포 하수도 사업소(당정동) 인근
 const AX = (R_MERC * ANCHOR.lng * Math.PI) / 180
 const AY = R_MERC * Math.log(Math.tan(Math.PI / 4 + (ANCHOR.lat * Math.PI) / 360))
 
@@ -198,12 +221,22 @@ const StaticLayers = memo(function StaticLayers({
         const ground = parsePoints(z.points).map(([x, y]) => proj(x, y, mode))
         const top = ground.map(([x, y]) => [x, y - (mode === '2.5d' ? EXTRUDE : 0)] as [number, number])
         const [lx, ly] = proj(z.labelX, z.labelY, mode)
-        return { ...z, ground, top, lx, ly: mode === '2.5d' ? ly - EXTRUDE - 8 : ly, maxY: Math.max(...ground.map((p) => p[1])) }
+        const risk: GasLevel = ZONE_RISK.get(z.name)?.level ?? 'good'
+        return { ...z, ground, top, lx, ly: mode === '2.5d' ? ly - EXTRUDE - 8 : ly, maxY: Math.max(...ground.map((p) => p[1])), risk }
       })
       .sort((a, b) => a.maxY - b.maxY)
     const bs = mapBeacons.map((b) => ({ ...b, p: proj(b.x, b.y, mode) }))
     const gs = gateways.map((g) => ({ ...g, p: proj(g.x, g.y, mode) }))
-    return { boundary, gridLines, zs, bs, gs }
+    const gds = gasDetectors.map((g) => ({ ...g, p: proj(g.x, g.y, mode), lvl: gasSeverity(g) }))
+    /* 지하 공동구 — 2.5D에서도 작업 구역과 동일한 지표면(z)에 그린다 */
+    const tns = utilityTunnels.map((t) => ({
+      ...t,
+      pts: toStr(t.path.map(([x, y]) => proj(x, y, mode))),
+    }))
+    const ents = tunnelEntrances.map((e) => ({ ...e, p: proj(e.x, e.y, mode) }))
+    const tl = proj(745, 340, mode)
+    tl[1] -= 8
+    return { boundary, gridLines, zs, bs, gs, gds, tns, ents, tl }
   }, [mode])
 
   const iso = mode === '2.5d'
@@ -226,7 +259,47 @@ const StaticLayers = memo(function StaticLayers({
         strokeLinejoin="round"
         vectorEffect="non-scaling-stroke"
       />
-      {layers.zs.map((z) => (
+      {/* 지하 공동구(유틸리티 터널) — 건물 하부 레이어: 코리도 몸체 + 점선 중심선 */}
+      {layers.tns.map((t) => (
+        <g key={t.id} opacity={iso ? 0.7 : 1}>
+          <polyline
+            points={t.pts}
+            fill="none"
+            stroke="var(--series-1)"
+            strokeOpacity="0.16"
+            strokeWidth="20"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <title>{`${t.name} · 지하 공동구`}</title>
+          </polyline>
+          <polyline
+            points={t.pts}
+            fill="none"
+            stroke="var(--series-1)"
+            strokeOpacity="0.6"
+            strokeWidth="1.4"
+            strokeDasharray="7 5"
+            strokeLinejoin="round"
+            vectorEffect="non-scaling-stroke"
+            pointerEvents="none"
+          />
+        </g>
+      ))}
+      <text
+        x={layers.tl[0]}
+        y={layers.tl[1]}
+        textAnchor="middle"
+        fontSize={fontSize * 0.85}
+        fill="var(--series-1)"
+        opacity="0.85"
+        fontWeight="600"
+      >
+        지하 공동구
+      </text>
+      {layers.zs.map((z) => {
+        const zc = RISK_COLOR[z.risk]
+        return (
         <g key={z.id}>
           {iso && (
             <>
@@ -237,9 +310,9 @@ const StaticLayers = memo(function StaticLayers({
                   <polygon
                     key={i}
                     points={toStr([p, q, z.top[(i + 1) % z.top.length], z.top[i]])}
-                    fill="var(--series-4)"
+                    fill={zc}
                     fillOpacity="0.14"
-                    stroke="var(--series-4)"
+                    stroke={zc}
                     strokeOpacity="0.3"
                     strokeWidth="0.8"
                   />
@@ -249,18 +322,38 @@ const StaticLayers = memo(function StaticLayers({
           )}
           <polygon
             points={toStr(z.top)}
-            fill="var(--series-4)"
-            fillOpacity={iso ? 0.22 : 0.1}
-            stroke="var(--series-4)"
-            strokeOpacity="0.5"
-            strokeWidth="1.2"
+            fill={zc}
+            fillOpacity={iso ? 0.22 : z.risk === 'good' ? 0.1 : 0.16}
+            stroke={zc}
+            strokeOpacity={z.risk === 'good' ? 0.5 : 0.75}
+            strokeWidth={z.risk === 'good' ? 1.2 : 1.8}
             vectorEffect="non-scaling-stroke"
-          />
+          >
+            {z.risk !== 'good' && (
+              <animate attributeName="fill-opacity" values="0.16;0.3;0.16" dur="2s" repeatCount="indefinite" />
+            )}
+          </polygon>
           <text x={z.lx} y={z.ly} textAnchor="middle" fontSize={fontSize} fill="var(--text-muted)" fontWeight="500">
             {z.name}
           </text>
+          {z.risk !== 'good' && (
+            <text
+              x={z.lx}
+              y={z.ly + fontSize + 2}
+              textAnchor="middle"
+              fontSize={fontSize * 0.85}
+              fill={zc}
+              fontWeight="700"
+              paintOrder="stroke"
+              stroke="var(--page)"
+              strokeWidth="2.5"
+            >
+              {RISK_LABEL[z.risk]}
+            </text>
+          )}
         </g>
-      ))}
+        )
+      })}
       {showDevices && layers.bs.map((b) => (
         <g key={b.id} transform={`translate(${b.p[0]}, ${b.p[1]}) scale(${km})`}>
           {iso && <line y2={-PIN} stroke="var(--series-4)" strokeOpacity="0.5" strokeWidth="1" />}
@@ -282,6 +375,55 @@ const StaticLayers = memo(function StaticLayers({
             <path d="M-4.5,-0.5 a6.3,6.3 0 0 1 9,0 M-2.4,1.8 a3.2,3.2 0 0 1 4.8,0" stroke="white" strokeWidth="1.5" fill="none" strokeLinecap="round" />
             <circle cy="4.2" r="1.3" fill="white" />
           </g>
+        </g>
+      ))}
+      {/* 고정형 가스검침기 — 마름모 마커, 판정 등급 색상 */}
+      {showDevices && layers.gds.map((g) => (
+        <g key={g.id} transform={`translate(${g.p[0]}, ${g.p[1]}) scale(${km})`}>
+          {iso && <line y2={-PIN} stroke={GAS_COLOR[g.lvl]} strokeOpacity="0.5" strokeWidth="1" />}
+          <g transform={iso ? `translate(0, ${-PIN})` : undefined}>
+            {g.lvl === 'critical' && (
+              <circle r="12" fill="none" stroke={GAS_COLOR[g.lvl]} strokeWidth="2" opacity="0.7">
+                <animate attributeName="r" values="7;16" dur="1.2s" repeatCount="indefinite" />
+                <animate attributeName="opacity" values="0.7;0" dur="1.2s" repeatCount="indefinite" />
+              </circle>
+            )}
+            <rect
+              x="-5.2"
+              y="-5.2"
+              width="10.4"
+              height="10.4"
+              rx="2"
+              transform="rotate(45)"
+              fill={GAS_COLOR[g.lvl]}
+              stroke="var(--surface-1)"
+              strokeWidth="1.2"
+            >
+              <title>{`${g.id} · ${g.zone} · 고정형 가스검침기 (O₂ ${g.o2}% · H₂S ${g.h2s} · CO ${g.co} · NH₃ ${g.nh3} · CH₄ ${g.ch4})`}</title>
+            </rect>
+            <path
+              d="M0,-3 C1.8,-1 2.6,0.1 2.6,1.1 A2.6,2.6 0 1 1 -2.6,1.1 C-2.6,0.1 -1.8,-1 0,-3 Z"
+              fill="var(--surface-1)"
+              pointerEvents="none"
+            />
+          </g>
+        </g>
+      ))}
+      {/* 공동구 출입구(수직구·계단실) — 하강 셰브런 */}
+      {showDevices && layers.ents.map((e) => (
+        <g key={e.id} transform={`translate(${e.p[0]}, ${e.p[1]}) scale(${km})`}>
+          <rect x="-4" y="-4" width="8" height="8" rx="1.5" fill="var(--surface-1)" stroke="var(--series-1)" strokeWidth="1.4">
+            <title>{`${e.id} · ${e.zone} 공동구 출입구`}</title>
+          </rect>
+          <path
+            d="M-2,-1 L0,1.6 L2,-1"
+            fill="none"
+            stroke="var(--series-1)"
+            strokeWidth="1.3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            pointerEvents="none"
+          />
         </g>
       ))}
     </>
@@ -342,6 +484,7 @@ function WorkerLayer({
           const [x, y] = proj(rx, ry, mode)
           const color = w.danger ? 'var(--status-critical)' : 'var(--status-good)'
           const selected = w.id === selectedId
+          const pgas = PORTABLE_BY_WORKER.get(w.id)
           return (
             <g
               key={w.id}
@@ -368,6 +511,24 @@ function WorkerLayer({
                   <circle r="6.5" fill={color} stroke="var(--surface-1)" strokeWidth="2">
                     <title>{`${w.name} · ${w.zone} · ${w.heartRate}bpm`}</title>
                   </circle>
+                  {/* 이동형 가스검침기 배지 — 작업자 휴대, 함께 이동 */}
+                  {pgas && (
+                    <g transform="translate(8.5, -8.5)">
+                      <rect
+                        x="-3.8"
+                        y="-3.8"
+                        width="7.6"
+                        height="7.6"
+                        rx="1.5"
+                        transform="rotate(45)"
+                        fill={GAS_COLOR[gasSeverity(pgas)]}
+                        stroke="var(--surface-1)"
+                        strokeWidth="1.2"
+                      >
+                        <title>{`${pgas.id} · 이동형 가스검침기 (${w.name} 휴대) · O₂ ${pgas.o2}% · H₂S ${pgas.h2s} · CO ${pgas.co} · NH₃ ${pgas.nh3} · CH₄ ${pgas.ch4}`}</title>
+                      </rect>
+                    </g>
+                  )}
                   {k <= 2.2 && (
                     <text
                       y="19"
@@ -592,7 +753,7 @@ export default function SiteMap() {
 
       <div
         ref={wrapRef}
-        className="relative min-h-0 flex-1 touch-none overflow-hidden rounded-[10px] bg-page ring-1 ring-hairline"
+        className="relative min-h-0 flex-1 touch-none select-none overflow-hidden rounded-[10px] bg-page ring-1 ring-hairline"
         style={{ cursor: panRef.current.active ? 'grabbing' : 'grab' }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -648,7 +809,7 @@ export default function SiteMap() {
         )}
 
         {/* 범례 */}
-        <div className="absolute bottom-3 left-3 flex items-center gap-4 rounded-[10px] border border-hairline bg-surface-1/85 px-3 py-2 text-[11px] text-ink-2 backdrop-blur-sm">
+        <div className="absolute bottom-3 left-3 flex max-w-[calc(100%-150px)] flex-wrap items-center gap-x-3.5 gap-y-1 rounded-[10px] border border-hairline bg-surface-1/85 px-3 py-2 text-[11px] text-ink-2 backdrop-blur-sm">
           <span className="flex items-center gap-1.5">
             <span className="inline-block size-2.5 rounded-full bg-good" /> 작업자
           </span>
@@ -660,6 +821,19 @@ export default function SiteMap() {
           </span>
           <span className="flex items-center gap-1.5 text-s1">
             <Wifi size={12} /> <span className="text-ink-2">게이트웨이</span>
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block size-2.5 rotate-45 rounded-[2px] bg-s3" /> 고정형 검침기
+          </span>
+          <span className="flex items-center gap-2">
+            <span className="relative inline-flex">
+              <span className="inline-block size-2.5 rounded-full bg-good" />
+              <span className="absolute -right-1 -top-1 inline-block size-2 rotate-45 rounded-[1px] bg-s3" />
+            </span>
+            이동형 검침기(휴대)
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block w-4 border-t-2 border-dashed border-s1" /> 지하 공동구
           </span>
         </div>
 
