@@ -10,7 +10,9 @@ import {
 } from 'lucide-react'
 import {
   assessZoneRisks,
+  floorDefs,
   gasDetectors,
+  gasMetrics,
   gasSeverity,
   gateways,
   liveWorkers,
@@ -19,13 +21,24 @@ import {
   siteBoundary,
   tunnelEntrances,
   utilityTunnels,
+  workerFloor,
   workerPosition,
   zones,
+  type FloorId,
   type GasLevel,
   type LiveWorker,
+  type Zone,
 } from '../data/site'
 
 type ViewMode = '2d' | '2.5d'
+
+/* ── 층 스택 — 2.5D에서 지하층 평면을 아래로 내려, 여러 장의 2D를
+ * 하나의 아이소메트릭 스택으로 표현한다. 지하 슬래브 높이(LEVEL_GAP)는
+ * 층간 간격과 같아 상하층 슬래브가 이어져 '전체 건물'로 보인다. ── */
+const LEVEL_DY: Record<FloorId, number> = { F1: 0, B1: 36, B2: 72 }
+const LEVEL_GAP = 36
+const LV_ORDER: Record<FloorId, number> = { B2: 0, B1: 1, F1: 2 }
+const FLOOR_SHORT = Object.fromEntries(floorDefs.map((f) => [f.id, f.short])) as Record<FloorId, string>
 
 /* ── 구역 위험도(환경 데이터 기반) — 정적 목업 데이터라 모듈 단위 1회 평가 ── */
 const ZONE_RISK = new Map(assessZoneRisks().map((r) => [r.zone, r]))
@@ -40,6 +53,11 @@ const GAS_COLOR: Record<GasLevel, string> = {
   critical: 'var(--status-critical)',
 }
 const RISK_LABEL: Record<GasLevel, string> = { good: '', warning: '▲ 주의', critical: '▲ 위험' }
+const RISK_CHIP: Record<GasLevel, { label: string; cls: string }> = {
+  critical: { label: '위험', cls: 'bg-critical/10 text-critical border-critical/35' },
+  warning: { label: '주의', cls: 'bg-warning/10 text-warning border-warning/35' },
+  good: { label: '정상', cls: 'bg-good/10 text-good border-good/35' },
+}
 const PORTABLE_BY_WORKER = new Map(portableGasDetectors.map((p) => [p.workerId, p]))
 
 interface ViewBox {
@@ -201,43 +219,108 @@ function clientToVb(
   return [vb.x + (clientX - rect.left - ox) / s, vb.y + (clientY - rect.top - oy) / s]
 }
 
-/* ── 정적 레이어 (뷰 모드·줌 배율에만 반응) ───────────────────────── */
+/* ── 정적 레이어 (뷰 모드·층·줌 배율에만 반응) ────────────────────── */
 const StaticLayers = memo(function StaticLayers({
   mode,
+  floor,
   k,
   showGrid = true,
+  onZoneOpen,
 }: {
   mode: ViewMode
+  floor: FloorId
   k: number
   showGrid?: boolean
+  onZoneOpen: (name: string) => void
 }) {
   const layers = useMemo(() => {
-    const boundary = toStr(parsePoints(siteBoundary).map(([x, y]) => proj(x, y, mode)))
+    const iso = mode === '2.5d'
+    /* 층 반영 투영 — 2D는 층 필터만, 2.5D는 층별 수직 오프셋 */
+    const at = (x: number, y: number, lv: FloorId): [number, number] => {
+      const p = proj(x, y, mode)
+      return [p[0], p[1] + (iso ? LEVEL_DY[lv] : 0)]
+    }
+    const boundaryPts = parsePoints(siteBoundary).map(([x, y]) => proj(x, y, mode))
+    const boundary = toStr(boundaryPts)
+    /* 2.5D: 지하층 평면 외곽 — 스택된 2D 레이어를 시각화 */
+    const subPlanes = iso
+      ? (['B2', 'B1'] as FloorId[]).map((lv) => {
+          const pts = boundaryPts.map(([x, y]) => [x, y + LEVEL_DY[lv]] as [number, number])
+          const left = pts.reduce((a, b) => (b[0] < a[0] ? b : a))
+          return {
+            id: lv,
+            name: floorDefs.find((f) => f.id === lv)!.name,
+            pts: toStr(pts),
+            lx: left[0] - 8,
+            ly: left[1] + 4,
+          }
+        })
+      : []
     const gridLines: string[] = []
     for (let gx = 0; gx <= 1000; gx += 80) gridLines.push(toStr([proj(gx, 0, mode), proj(gx, 640, mode)]))
     for (let gy = 0; gy <= 640; gy += 80) gridLines.push(toStr([proj(0, gy, mode), proj(1000, gy, mode)]))
-    const zs = zones
-      .map((z) => {
-        const ground = parsePoints(z.points).map(([x, y]) => proj(x, y, mode))
-        const top = ground.map(([x, y]) => [x, y - (mode === '2.5d' ? EXTRUDE : 0)] as [number, number])
-        const [lx, ly] = proj(z.labelX, z.labelY, mode)
+
+    /* 구역 슬래브 — 2D는 선택 층의 평면도, 2.5D는 보유 층 전부를 스택 */
+    const zs = (iso ? zones : zones.filter((z) => z.floors.includes(floor)))
+      .flatMap((z) => {
         const risk: GasLevel = ZONE_RISK.get(z.name)?.level ?? 'good'
-        return { ...z, ground, top, lx, ly: mode === '2.5d' ? ly - EXTRUDE - 8 : ly, maxY: Math.max(...ground.map((p) => p[1])), risk }
+        const base = parsePoints(z.points)
+        const lvls = iso ? [...z.floors].sort((a, b) => LV_ORDER[a] - LV_ORDER[b]) : [floor]
+        const topLv = lvls[lvls.length - 1]
+        return lvls.map((lv) => {
+          const ground = base.map(([x, y]) => at(x, y, lv))
+          const h = iso ? (lv === 'F1' ? EXTRUDE : LEVEL_GAP) : 0
+          const top = ground.map(([x, y]) => [x, y - h] as [number, number])
+          const [lx, lyRaw] = at(z.labelX, z.labelY, lv)
+          return {
+            key: `${z.id}-${lv}`,
+            name: z.name,
+            floors: z.floors,
+            risk,
+            underground: iso && lv !== 'F1',
+            ground,
+            top,
+            labeled: lv === topLv,
+            lx,
+            ly: iso ? lyRaw - h - 8 : lyRaw,
+            lvOrder: LV_ORDER[lv],
+            maxY: Math.max(...ground.map((p) => p[1])),
+          }
+        })
       })
-      .sort((a, b) => a.maxY - b.maxY)
-    const bs = mapBeacons.map((b) => ({ ...b, p: proj(b.x, b.y, mode) }))
-    const gs = gateways.map((g) => ({ ...g, p: proj(g.x, g.y, mode) }))
-    const gds = gasDetectors.map((g) => ({ ...g, p: proj(g.x, g.y, mode), lvl: gasSeverity(g) }))
-    /* 지하 공동구 — 2.5D에서도 작업 구역과 동일한 지표면(z)에 그린다 */
-    const tns = utilityTunnels.map((t) => ({
-      ...t,
-      pts: toStr(t.path.map(([x, y]) => proj(x, y, mode))),
+      .sort((a, b) => a.lvOrder - b.lvOrder || a.maxY - b.maxY)
+
+    const bs = mapBeacons
+      .filter((b) => iso || (b.level ?? 'F1') === floor)
+      .map((b) => ({ ...b, lv: b.level ?? 'F1', p: at(b.x, b.y, b.level ?? 'F1') }))
+    const gs = (iso || floor === 'F1' ? gateways : []).map((g) => ({ ...g, p: at(g.x, g.y, 'F1') }))
+    const gds = (iso || floor === 'F1' ? gasDetectors : []).map((g) => ({
+      ...g,
+      p: at(g.x, g.y, 'F1'),
+      lvl: gasSeverity(g),
     }))
-    const ents = tunnelEntrances.map((e) => ({ ...e, p: proj(e.x, e.y, mode) }))
-    const tl = proj(745, 340, mode)
-    tl[1] -= 8
-    return { boundary, gridLines, zs, bs, gs, gds, tns, ents, tl }
-  }, [mode])
+
+    /* 지하 공동구 — 층별 라인, 2.5D는 해당 층 평면에 그린다 */
+    const tns = utilityTunnels
+      .filter((t) => iso || t.level === floor)
+      .sort((a, b) => LV_ORDER[a.level] - LV_ORDER[b.level])
+      .map((t) => ({ ...t, pts: toStr(t.path.map(([x, y]) => at(x, y, t.level))) }))
+    const tls = (
+      [
+        { lv: 'B1', x: 620, y: 338 },
+        { lv: 'B2', x: 745, y: 338 },
+      ] as Array<{ lv: FloorId; x: number; y: number }>
+    )
+      .filter((t) => iso || t.lv === floor)
+      .map((t) => ({ ...t, p: at(t.x, t.y, t.lv) }))
+    /* 출입구 — 지상 마커 + 2.5D 수직구(닿는 공동구 층까지) */
+    const ents = tunnelEntrances.map((e) => ({
+      ...e,
+      p: at(e.x, e.y, 'F1'),
+      depth: iso ? LEVEL_DY[e.level ?? 'B1'] : 0,
+    }))
+    return { boundary, subPlanes, gridLines, zs, bs, gs, gds, tns, tls, ents }
+  }, [mode, floor])
 
   const iso = mode === '2.5d'
   const fontSize = Math.max(6, Math.min(14, 12 * k))
@@ -249,6 +332,66 @@ const StaticLayers = memo(function StaticLayers({
         layers.gridLines.map((pts, i) => (
           <polyline key={i} points={pts} fill="none" stroke="var(--grid-line)" strokeWidth="0.6" vectorEffect="non-scaling-stroke" />
         ))}
+      {/* 2.5D: 지하층 평면 외곽 (B2 → B1 순으로 아래에서 위로) */}
+      {layers.subPlanes.map((p) => (
+        <g key={p.id}>
+          <polygon
+            points={p.pts}
+            fill="var(--series-1)"
+            fillOpacity="0.03"
+            stroke="var(--axis-line)"
+            strokeOpacity="0.7"
+            strokeWidth="1"
+            strokeDasharray="6 5"
+            strokeLinejoin="round"
+            vectorEffect="non-scaling-stroke"
+          />
+          <text x={p.lx} y={p.ly} textAnchor="end" fontSize={fontSize * 0.9} fill="var(--text-muted)">
+            {p.name}
+          </text>
+        </g>
+      ))}
+      {/* 지하 공동구(유틸리티 터널) — 층별 라인: 코리도 몸체 + 점선 중심선 */}
+      {layers.tns.map((t) => (
+        <g key={t.id} opacity={iso ? 0.8 : 1}>
+          <polyline
+            points={t.pts}
+            fill="none"
+            stroke="var(--series-1)"
+            strokeOpacity={t.level === 'B2' ? 0.12 : 0.16}
+            strokeWidth="20"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <title>{`${t.name} · 지하 공동구 (${FLOOR_SHORT[t.level]})`}</title>
+          </polyline>
+          <polyline
+            points={t.pts}
+            fill="none"
+            stroke="var(--series-1)"
+            strokeOpacity="0.6"
+            strokeWidth="1.4"
+            strokeDasharray={t.level === 'B2' ? '3 4' : '7 5'}
+            strokeLinejoin="round"
+            vectorEffect="non-scaling-stroke"
+            pointerEvents="none"
+          />
+        </g>
+      ))}
+      {layers.tls.map((t) => (
+        <text
+          key={t.lv}
+          x={t.p[0]}
+          y={t.p[1] - 8}
+          textAnchor="middle"
+          fontSize={fontSize * 0.85}
+          fill="var(--series-1)"
+          opacity="0.85"
+          fontWeight="600"
+        >
+          {iso ? `지하 공동구 · ${FLOOR_SHORT[t.lv]}` : '지하 공동구'}
+        </text>
+      ))}
       <polygon
         points={layers.boundary}
         fill="var(--status-serious)"
@@ -259,97 +402,90 @@ const StaticLayers = memo(function StaticLayers({
         strokeLinejoin="round"
         vectorEffect="non-scaling-stroke"
       />
-      {/* 지하 공동구(유틸리티 터널) — 건물 하부 레이어: 코리도 몸체 + 점선 중심선 */}
-      {layers.tns.map((t) => (
-        <g key={t.id} opacity={iso ? 0.7 : 1}>
-          <polyline
-            points={t.pts}
-            fill="none"
-            stroke="var(--series-1)"
-            strokeOpacity="0.16"
-            strokeWidth="20"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <title>{`${t.name} · 지하 공동구`}</title>
-          </polyline>
-          <polyline
-            points={t.pts}
-            fill="none"
-            stroke="var(--series-1)"
-            strokeOpacity="0.6"
-            strokeWidth="1.4"
-            strokeDasharray="7 5"
-            strokeLinejoin="round"
-            vectorEffect="non-scaling-stroke"
-            pointerEvents="none"
-          />
-        </g>
-      ))}
-      <text
-        x={layers.tl[0]}
-        y={layers.tl[1]}
-        textAnchor="middle"
-        fontSize={fontSize * 0.85}
-        fill="var(--series-1)"
-        opacity="0.85"
-        fontWeight="600"
-      >
-        지하 공동구
-      </text>
-      {layers.zs.map((z) => {
-        const zc = RISK_COLOR[z.risk]
+      {layers.zs.map((s) => {
+        const zc = RISK_COLOR[s.risk]
+        const dash = s.underground ? '5 4' : undefined
         return (
-        <g key={z.id}>
+        <g
+          key={s.key}
+          style={{ cursor: 'pointer' }}
+          onClick={(e) => {
+            e.stopPropagation()
+            onZoneOpen(s.name)
+          }}
+        >
+          <title>{`${s.name} · 클릭하면 건물 상세 보기`}</title>
           {iso && (
             <>
-              <polygon points={toStr(z.ground)} fill="var(--page)" opacity="0.5" />
-              {z.ground.map((p, i) => {
-                const q = z.ground[(i + 1) % z.ground.length]
+              <polygon points={toStr(s.ground)} fill="var(--page)" opacity={s.underground ? 0.3 : 0.5} />
+              {s.ground.map((p, i) => {
+                const q = s.ground[(i + 1) % s.ground.length]
                 return (
                   <polygon
                     key={i}
-                    points={toStr([p, q, z.top[(i + 1) % z.top.length], z.top[i]])}
+                    points={toStr([p, q, s.top[(i + 1) % s.top.length], s.top[i]])}
                     fill={zc}
-                    fillOpacity="0.14"
+                    fillOpacity={s.underground ? 0.07 : 0.14}
                     stroke={zc}
-                    strokeOpacity="0.3"
+                    strokeOpacity={s.underground ? 0.22 : 0.3}
                     strokeWidth="0.8"
+                    strokeDasharray={dash}
                   />
                 )
               })}
             </>
           )}
           <polygon
-            points={toStr(z.top)}
+            points={toStr(s.top)}
             fill={zc}
-            fillOpacity={iso ? 0.22 : z.risk === 'good' ? 0.1 : 0.16}
+            fillOpacity={iso ? (s.underground ? 0.1 : 0.22) : s.risk === 'good' ? 0.1 : 0.16}
             stroke={zc}
-            strokeOpacity={z.risk === 'good' ? 0.5 : 0.75}
-            strokeWidth={z.risk === 'good' ? 1.2 : 1.8}
+            strokeOpacity={s.underground ? 0.4 : s.risk === 'good' ? 0.5 : 0.75}
+            strokeWidth={s.risk === 'good' || s.underground ? 1.2 : 1.8}
+            strokeDasharray={dash}
             vectorEffect="non-scaling-stroke"
           >
-            {z.risk !== 'good' && (
+            {s.risk !== 'good' && !s.underground && (
               <animate attributeName="fill-opacity" values="0.16;0.3;0.16" dur="2s" repeatCount="indefinite" />
             )}
           </polygon>
-          <text x={z.lx} y={z.ly} textAnchor="middle" fontSize={fontSize} fill="var(--text-muted)" fontWeight="500">
-            {z.name}
-          </text>
-          {z.risk !== 'good' && (
-            <text
-              x={z.lx}
-              y={z.ly + fontSize + 2}
-              textAnchor="middle"
-              fontSize={fontSize * 0.85}
-              fill={zc}
-              fontWeight="700"
-              paintOrder="stroke"
-              stroke="var(--page)"
-              strokeWidth="2.5"
-            >
-              {RISK_LABEL[z.risk]}
-            </text>
+          {s.labeled && (
+            <>
+              <text x={s.lx} y={s.ly} textAnchor="middle" fontSize={fontSize} fill="var(--text-muted)" fontWeight="500">
+                {s.name}
+              </text>
+              {s.risk !== 'good' && (
+                <text
+                  x={s.lx}
+                  y={s.ly + fontSize + 2}
+                  textAnchor="middle"
+                  fontSize={fontSize * 0.85}
+                  fill={zc}
+                  fontWeight="700"
+                  paintOrder="stroke"
+                  stroke="var(--page)"
+                  strokeWidth="2.5"
+                >
+                  {RISK_LABEL[s.risk]}
+                </text>
+              )}
+              {/* 층 구성 태그 — 지상만/지하만/복합 건물을 층값으로 구분 */}
+              {iso && (
+                <text
+                  x={s.lx}
+                  y={s.ly + fontSize * (s.risk !== 'good' ? 2 : 1) + 3}
+                  textAnchor="middle"
+                  fontSize={fontSize * 0.72}
+                  fill="var(--text-muted)"
+                  opacity="0.9"
+                  paintOrder="stroke"
+                  stroke="var(--page)"
+                  strokeWidth="2"
+                >
+                  {s.floors.map((f) => FLOOR_SHORT[f]).join('·')}
+                </text>
+              )}
+            </>
           )}
         </g>
         )
@@ -409,21 +545,33 @@ const StaticLayers = memo(function StaticLayers({
           </g>
         </g>
       ))}
-      {/* 공동구 출입구(수직구·계단실) — 하강 셰브런 */}
+      {/* 공동구 출입구(수직구·계단실) — 지상 셰브런 + 2.5D 수직구 라인 */}
       {showDevices && layers.ents.map((e) => (
-        <g key={e.id} transform={`translate(${e.p[0]}, ${e.p[1]}) scale(${km})`}>
-          <rect x="-4" y="-4" width="8" height="8" rx="1.5" fill="var(--surface-1)" stroke="var(--series-1)" strokeWidth="1.4">
-            <title>{`${e.id} · ${e.zone} 공동구 출입구`}</title>
-          </rect>
-          <path
-            d="M-2,-1 L0,1.6 L2,-1"
-            fill="none"
-            stroke="var(--series-1)"
-            strokeWidth="1.3"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            pointerEvents="none"
-          />
+        <g key={e.id} transform={`translate(${e.p[0]}, ${e.p[1]})`}>
+          {e.depth > 0 && (
+            <line
+              y2={e.depth}
+              stroke="var(--series-1)"
+              strokeOpacity="0.45"
+              strokeWidth="1.2"
+              strokeDasharray="3 3"
+              pointerEvents="none"
+            />
+          )}
+          <g transform={`scale(${km})`}>
+            <rect x="-4" y="-4" width="8" height="8" rx="1.5" fill="var(--surface-1)" stroke="var(--series-1)" strokeWidth="1.4">
+              <title>{`${e.id} · ${e.zone} 공동구 출입구 (${FLOOR_SHORT[e.level ?? 'B1']} 연결)`}</title>
+            </rect>
+            <path
+              d="M-2,-1 L0,1.6 L2,-1"
+              fill="none"
+              stroke="var(--series-1)"
+              strokeWidth="1.3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              pointerEvents="none"
+            />
+          </g>
         </g>
       ))}
     </>
@@ -432,12 +580,14 @@ const StaticLayers = memo(function StaticLayers({
 
 /* ── 선택 작업자 이동 궤적 (최근 60초) ────────────────────────────── */
 function Trail({ worker, tick, mode }: { worker: LiveWorker; tick: number; mode: ViewMode }) {
+  const dy = mode === '2.5d' ? LEVEL_DY[workerFloor(worker)] : 0
   const pts: Array<[number, number]> = []
   for (let k = 60; k >= 0; k -= 3) {
     const t = tick - k
     if (t < 0) continue
     const [x, y] = workerPosition(worker, t)
-    pts.push(proj(x, y, mode))
+    const [px, py] = proj(x, y, mode)
+    pts.push([px, py + dy])
   }
   if (pts.length < 2) return null
   const color = worker.danger ? 'var(--status-critical)' : 'var(--series-1)'
@@ -460,16 +610,18 @@ function Trail({ worker, tick, mode }: { worker: LiveWorker; tick: number; mode:
   )
 }
 
-/* ── 작업자 레이어 (1초 tick) ─────────────────────────────────────── */
+/* ── 작업자 레이어 (1초 tick) — 2D는 층 필터, 2.5D는 층 평면에 표시 ── */
 function WorkerLayer({
   tick,
   mode,
+  floor,
   k,
   selectedId,
   onSelect,
 }: {
   tick: number
   mode: ViewMode
+  floor: FloorId
   k: number
   selectedId: number | null
   onSelect: (id: number) => void
@@ -478,10 +630,12 @@ function WorkerLayer({
   return (
     <>
       {liveWorkers
-        .filter((w) => w.outTime === null)
+        .filter((w) => w.outTime === null && (iso || workerFloor(w) === floor))
         .map((w) => {
+          const wf = workerFloor(w)
           const [rx, ry] = workerPosition(w, tick)
-          const [x, y] = proj(rx, ry, mode)
+          const [x, y0] = proj(rx, ry, mode)
+          const y = y0 + (iso ? LEVEL_DY[wf] : 0)
           const color = w.danger ? 'var(--status-critical)' : 'var(--status-good)'
           const selected = w.id === selectedId
           const pgas = PORTABLE_BY_WORKER.get(w.id)
@@ -509,7 +663,7 @@ function WorkerLayer({
                     </circle>
                   )}
                   <circle r="6.5" fill={color} stroke="var(--surface-1)" strokeWidth="2">
-                    <title>{`${w.name} · ${w.zone} · ${w.heartRate}bpm`}</title>
+                    <title>{`${w.name} · ${w.space} ${w.zone} · ${w.heartRate}bpm`}</title>
                   </circle>
                   {/* 이동형 가스검침기 배지 — 작업자 휴대, 함께 이동 */}
                   {pgas && (
@@ -549,6 +703,421 @@ function WorkerLayer({
           )
         })}
     </>
+  )
+}
+
+/* ── 건물 상세 모달 — 구역 클릭 시 층별 확대 평면도 + 현황 정보 ──────
+ * 좌: 층 탭 + 구역 bbox로 줌인한 대형 평면도(작업자 실시간 이동 포함)
+ * 우: 위험도 판정 근거 · 재실 작업자 · 고정형 검침기 · 설비 요약 */
+function ZoneDetailModal({
+  zone,
+  tick,
+  onClose,
+}: {
+  zone: Zone
+  tick: number
+  onClose: () => void
+}) {
+  const floorsSorted = [...zone.floors].sort((a, b) => LV_ORDER[b] - LV_ORDER[a]) // 지상 → 지하
+  const [vmode, setVmode] = useState<ViewMode>('2.5d') // 건물 상세는 2.5D(전 층 스택)가 기본
+  const [fl, setFl] = useState<FloorId>(floorsSorted[0])
+  const iso = vmode === '2.5d'
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  const risk = ZONE_RISK.get(zone.name)
+  const level: GasLevel = risk?.level ?? 'good'
+  const zc = RISK_COLOR[level]
+
+  /* 층 반영 투영 — 메인 지도와 동일한 규칙 */
+  const pj = (x: number, y: number, lv: FloorId): [number, number] => {
+    const p = proj(x, y, vmode)
+    return [p[0], p[1] + (iso ? LEVEL_DY[lv] : 0)]
+  }
+
+  /* 표시 층의 슬래브(바닥·상단) 투영점 전체로 bbox → 확대 viewBox */
+  const basePts = parsePoints(zone.points)
+  const bboxLvls = iso ? zone.floors : [fl]
+  const allPts: Array<[number, number]> = []
+  for (const lv of bboxLvls) {
+    const h = iso ? (lv === 'F1' ? EXTRUDE : LEVEL_GAP) : 0
+    for (const [x, y] of basePts) {
+      const g = pj(x, y, lv)
+      allPts.push(g, [g[0], g[1] - h])
+    }
+  }
+  const pad = iso ? 46 : 55
+  const x0 = Math.min(...allPts.map((p) => p[0])) - pad
+  const y0 = Math.min(...allPts.map((p) => p[1])) - pad
+  const bw = Math.max(...allPts.map((p) => p[0])) + pad - x0
+  const bh = Math.max(...allPts.map((p) => p[1])) + pad - y0
+  const msc = Math.max(0.5, bw / 460) // 마커 확대 배율 — 크게 보되 과대 방지
+
+  /* 2.5D 슬래브 스택 (아래층부터) */
+  const slabs = (iso ? [...zone.floors].sort((a, b) => LV_ORDER[a] - LV_ORDER[b]) : []).map((lv) => {
+    const h = lv === 'F1' ? EXTRUDE : LEVEL_GAP
+    const ground = basePts.map(([x, y]) => pj(x, y, lv))
+    const top = ground.map(([x, y]) => [x, y - h] as [number, number])
+    const left = ground.reduce((a, b) => (b[0] < a[0] ? b : a))
+    return {
+      lv,
+      ground,
+      top,
+      underground: lv !== 'F1',
+      lx: left[0] - 8,
+      ly: left[1] - h / 2 + 3,
+      name: floorDefs.find((d) => d.id === lv)!.name,
+    }
+  })
+
+  /* 표시 오브젝트 — 2.5D는 전 층, 2D는 선택 층. viewBox 클리핑으로 주변만 보인다 */
+  const beacons = mapBeacons.filter((b) => iso || (b.level ?? 'F1') === fl)
+  const dets = iso || fl === 'F1' ? gasDetectors : []
+  const gws = iso || fl === 'F1' ? gateways : []
+  const tuns = utilityTunnels.filter((t) => iso || t.level === fl)
+  const zoneWorkers = liveWorkers.filter((w) => w.outTime === null && w.zone === zone.name)
+  const floorWorkers = iso ? zoneWorkers : zoneWorkers.filter((w) => workerFloor(w) === fl)
+  const zoneDets = gasDetectors.filter((d) => d.zone === zone.name)
+  const zoneBeaconCnt = mapBeacons.filter((b) => b.zone === zone.name).length
+  const zoneGwCnt = gateways.filter((g) => g.zone === zone.name).length
+  const zoneEnts = tunnelEntrances.filter((e) => e.zone === zone.name)
+  const fontPx = 10 * msc
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="flex h-[min(82vh,780px)] w-full max-w-5xl flex-col overflow-hidden rounded-[14px] border border-hairline bg-surface-1"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex shrink-0 items-center gap-3 border-b border-hairline px-5 py-3.5">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h2 className="truncate text-lg font-semibold text-ink">{zone.name}</h2>
+              <span
+                className={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${RISK_CHIP[level].cls}`}
+              >
+                {RISK_CHIP[level].label}
+              </span>
+            </div>
+            <p className="mt-0.5 truncate text-xs text-muted">
+              {zone.floors.map((f) => floorDefs.find((d) => d.id === f)!.name).join(' · ')}
+              {risk?.cause && <span className="ml-2 text-serious">{risk.cause}</span>}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="ml-auto flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-hairline text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
+            aria-label="닫기"
+            title="닫기 (ESC)"
+          >
+            <X size={15} />
+          </button>
+        </div>
+
+        <div className="flex min-h-0 flex-1">
+          {/* 좌: 층 탭 + 확대 평면도 */}
+          <div className="flex min-w-0 flex-1 flex-col gap-2 p-4">
+            <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+              <div className="flex rounded-lg border border-hairline p-0.5">
+                {(['2.5d', '2d'] as const).map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => setVmode(m)}
+                    className={`h-7 cursor-pointer whitespace-nowrap rounded-md px-2.5 text-xs font-semibold transition-colors ${
+                      vmode === m ? 'bg-primary text-white' : 'text-ink-2 hover:bg-surface-2'
+                    }`}
+                  >
+                    {m === '2.5d' ? '2.5D · 전체 층' : '2D · 층별'}
+                  </button>
+                ))}
+              </div>
+              <div
+                className={`flex rounded-lg border border-hairline p-0.5 transition-opacity ${
+                  iso ? 'pointer-events-none opacity-40' : ''
+                }`}
+              >
+                {floorsSorted.map((f) => {
+                  const def = floorDefs.find((d) => d.id === f)!
+                  const cnt = zoneWorkers.filter((w) => workerFloor(w) === f).length
+                  return (
+                    <button
+                      key={f}
+                      onClick={() => setFl(f)}
+                      className={`h-7 cursor-pointer whitespace-nowrap rounded-md px-2.5 text-xs font-semibold transition-colors ${
+                        !iso && fl === f ? 'bg-primary text-white' : 'text-ink-2 hover:bg-surface-2'
+                      }`}
+                    >
+                      {def.short}
+                      {cnt > 0 && <span className="ml-1 opacity-80">({cnt})</span>}
+                    </button>
+                  )
+                })}
+              </div>
+              <span className="ml-auto text-[11px] text-muted">1초 갱신 · 실시간 위치</span>
+            </div>
+            <div className="min-h-0 flex-1 overflow-hidden rounded-[10px] bg-page ring-1 ring-hairline">
+              <svg viewBox={`${x0} ${y0} ${bw} ${bh}`} className="h-full w-full" role="img" aria-label={`${zone.name} 상세 평면도`}>
+                {/* 2.5D: 지하층 평면 힌트 — 슬래브 아래 은은한 바닥 */}
+                {slabs.filter((s) => s.underground).map((s) => (
+                  <polygon key={`pl-${s.lv}`} points={toStr(s.ground)} fill="var(--series-1)" fillOpacity="0.03" />
+                ))}
+                {/* 공동구 — 2.5D는 층 평면에, 2D는 선택 층만 */}
+                {tuns.map((t) => {
+                  const p = toStr(t.path.map(([x, y]) => pj(x, y, t.level)))
+                  return (
+                    <g key={t.id}>
+                      <polyline points={p} fill="none" stroke="var(--series-1)" strokeOpacity="0.16" strokeWidth="20" strokeLinecap="round" strokeLinejoin="round">
+                        <title>{`${t.name} (${FLOOR_SHORT[t.level]})`}</title>
+                      </polyline>
+                      <polyline points={p} fill="none" stroke="var(--series-1)" strokeOpacity="0.55" strokeWidth="1.2" strokeDasharray={t.level === 'B2' ? '3 4' : '6 4'} strokeLinejoin="round" vectorEffect="non-scaling-stroke" pointerEvents="none" />
+                    </g>
+                  )
+                })}
+                {/* 건물 — 2.5D: 층 슬래브 스택 / 2D: 평면 폴리곤 */}
+                {iso ? (
+                  slabs.map((s) => (
+                    <g key={s.lv}>
+                      <polygon points={toStr(s.ground)} fill="var(--page)" opacity={s.underground ? 0.3 : 0.5} />
+                      {s.ground.map((p, i) => {
+                        const q = s.ground[(i + 1) % s.ground.length]
+                        return (
+                          <polygon
+                            key={i}
+                            points={toStr([p, q, s.top[(i + 1) % s.top.length], s.top[i]])}
+                            fill={zc}
+                            fillOpacity={s.underground ? 0.08 : 0.15}
+                            stroke={zc}
+                            strokeOpacity={s.underground ? 0.28 : 0.38}
+                            strokeWidth="0.8"
+                            strokeDasharray={s.underground ? '5 4' : undefined}
+                          />
+                        )
+                      })}
+                      <polygon
+                        points={toStr(s.top)}
+                        fill={zc}
+                        fillOpacity={s.underground ? 0.12 : 0.24}
+                        stroke={zc}
+                        strokeOpacity={s.underground ? 0.45 : 0.7}
+                        strokeWidth={s.underground ? 1.2 : 1.6}
+                        strokeDasharray={s.underground ? '5 4' : undefined}
+                        vectorEffect="non-scaling-stroke"
+                      >
+                        {level !== 'good' && !s.underground && (
+                          <animate attributeName="fill-opacity" values="0.24;0.36;0.24" dur="2s" repeatCount="indefinite" />
+                        )}
+                      </polygon>
+                      {/* 층 라벨 */}
+                      <text x={s.lx} y={s.ly} textAnchor="end" fontSize={11 * msc} fill="var(--text-muted)" fontWeight="500">
+                        {s.name}
+                      </text>
+                    </g>
+                  ))
+                ) : (
+                  <polygon
+                    points={zone.points}
+                    fill={zc}
+                    fillOpacity={level === 'good' ? 0.08 : 0.13}
+                    stroke={zc}
+                    strokeOpacity="0.7"
+                    strokeWidth="1.6"
+                    vectorEffect="non-scaling-stroke"
+                  >
+                    {level !== 'good' && (
+                      <animate attributeName="fill-opacity" values="0.13;0.24;0.13" dur="2s" repeatCount="indefinite" />
+                    )}
+                  </polygon>
+                )}
+                {/* 공동구 출입구 — 2.5D는 수직구 라인 포함 */}
+                {tunnelEntrances.map((e) => {
+                  const p = pj(e.x, e.y, 'F1')
+                  return (
+                    <g key={e.id} transform={`translate(${p[0]}, ${p[1]})`}>
+                      {iso && (
+                        <line y2={LEVEL_DY[e.level ?? 'B1']} stroke="var(--series-1)" strokeOpacity="0.45" strokeWidth="1.2" strokeDasharray="3 3" pointerEvents="none" />
+                      )}
+                      <g transform={`scale(${msc})`}>
+                        <rect x="-4" y="-4" width="8" height="8" rx="1.5" fill="var(--surface-1)" stroke="var(--series-1)" strokeWidth="1.4">
+                          <title>{`${e.id} · 공동구 출입구 (${FLOOR_SHORT[e.level ?? 'B1']} 연결)`}</title>
+                        </rect>
+                        <path d="M-2,-1 L0,1.6 L2,-1" fill="none" stroke="var(--series-1)" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" pointerEvents="none" />
+                      </g>
+                    </g>
+                  )
+                })}
+                {/* 비콘 */}
+                {beacons.map((b) => {
+                  const p = pj(b.x, b.y, b.level ?? 'F1')
+                  return (
+                    <g key={b.id} transform={`translate(${p[0]}, ${p[1]}) scale(${msc})`}>
+                      <rect x="-4.5" y="-4.5" width="9" height="9" rx="2" fill="var(--series-4)" opacity="0.9">
+                        <title>{`${b.id} · ${b.zone} (${FLOOR_SHORT[b.level ?? 'F1']})`}</title>
+                      </rect>
+                      <rect x="-1.8" y="-1.8" width="3.6" height="3.6" rx="1" fill="var(--surface-1)" />
+                    </g>
+                  )
+                })}
+                {/* 게이트웨이 */}
+                {gws.map((g) => {
+                  const p = pj(g.x, g.y, 'F1')
+                  return (
+                    <g key={g.id} transform={`translate(${p[0]}, ${p[1]}) scale(${msc})`}>
+                      <circle r="10" fill="var(--series-1)" opacity="0.95">
+                        <title>{`${g.id} · ${g.zone}`}</title>
+                      </circle>
+                      <path d="M-4.5,-0.5 a6.3,6.3 0 0 1 9,0 M-2.4,1.8 a3.2,3.2 0 0 1 4.8,0" stroke="white" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+                      <circle cy="4.2" r="1.3" fill="white" />
+                    </g>
+                  )
+                })}
+                {/* 고정형 가스검침기 */}
+                {dets.map((g) => {
+                  const lvl = gasSeverity(g)
+                  const p = pj(g.x, g.y, 'F1')
+                  return (
+                    <g key={g.id} transform={`translate(${p[0]}, ${p[1]}) scale(${msc})`}>
+                      {lvl === 'critical' && (
+                        <circle r="12" fill="none" stroke={GAS_COLOR[lvl]} strokeWidth="2" opacity="0.7">
+                          <animate attributeName="r" values="7;16" dur="1.2s" repeatCount="indefinite" />
+                          <animate attributeName="opacity" values="0.7;0" dur="1.2s" repeatCount="indefinite" />
+                        </circle>
+                      )}
+                      <rect x="-5.2" y="-5.2" width="10.4" height="10.4" rx="2" transform="rotate(45)" fill={GAS_COLOR[lvl]} stroke="var(--surface-1)" strokeWidth="1.2">
+                        <title>{`${g.id} · ${g.zone} (O₂ ${g.o2}% · H₂S ${g.h2s} · CO ${g.co} · NH₃ ${g.nh3} · CH₄ ${g.ch4})`}</title>
+                      </rect>
+                      <path d="M0,-3 C1.8,-1 2.6,0.1 2.6,1.1 A2.6,2.6 0 1 1 -2.6,1.1 C-2.6,0.1 -1.8,-1 0,-3 Z" fill="var(--surface-1)" pointerEvents="none" />
+                    </g>
+                  )
+                })}
+                {/* 작업자 — 실시간 이동, 2.5D는 소속 층 평면에 표시 */}
+                {floorWorkers.map((w) => {
+                  const [rx, ry] = workerPosition(w, tick)
+                  const [x, y] = pj(rx, ry, workerFloor(w))
+                  const color = w.danger ? 'var(--status-critical)' : 'var(--status-good)'
+                  const pgas = PORTABLE_BY_WORKER.get(w.id)
+                  return (
+                    <g key={w.id} style={{ transform: `translate(${x}px, ${y}px)`, transition: 'transform 1s linear' }}>
+                      <g transform={`scale(${msc})`}>
+                        {w.danger && (
+                          <circle r="14" fill="none" stroke={color} strokeWidth="2" opacity="0.7">
+                            <animate attributeName="r" values="8;18" dur="1.2s" repeatCount="indefinite" />
+                            <animate attributeName="opacity" values="0.7;0" dur="1.2s" repeatCount="indefinite" />
+                          </circle>
+                        )}
+                        <circle r="6.5" fill={color} stroke="var(--surface-1)" strokeWidth="2">
+                          <title>{`${w.name} · ${w.space} · ${w.heartRate}bpm`}</title>
+                        </circle>
+                        {pgas && (
+                          <g transform="translate(8.5, -8.5)">
+                            <rect x="-3.8" y="-3.8" width="7.6" height="7.6" rx="1.5" transform="rotate(45)" fill={GAS_COLOR[gasSeverity(pgas)]} stroke="var(--surface-1)" strokeWidth="1.2">
+                              <title>{`${pgas.id} · 이동형 (${w.name} 휴대)`}</title>
+                            </rect>
+                          </g>
+                        )}
+                        <text y="20" textAnchor="middle" fontSize="11" fontWeight="600" fill="var(--text-secondary)" paintOrder="stroke" stroke="var(--page)" strokeWidth="3">
+                          {w.name}
+                        </text>
+                      </g>
+                    </g>
+                  )
+                })}
+                {floorWorkers.length === 0 && (
+                  <text x={x0 + bw / 2} y={y0 + bh / 2} textAnchor="middle" fontSize={fontPx * 1.1} fill="var(--text-muted)">
+                    이 층에 재실 작업자가 없습니다
+                  </text>
+                )}
+              </svg>
+            </div>
+          </div>
+
+          {/* 우: 현황 정보 */}
+          <div className="w-80 shrink-0 overflow-y-auto border-l border-hairline p-4">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted">위험도 판정</p>
+            <p className="mt-1.5 text-[13px] leading-relaxed text-ink-2">
+              {risk?.cause ? (
+                <>
+                  <span className={level === 'critical' ? 'font-semibold text-critical' : 'font-semibold text-serious'}>
+                    {RISK_CHIP[level].label}
+                  </span>{' '}
+                  — {risk.cause}
+                </>
+              ) : (
+                '모든 검침 값이 기준 이내입니다.'
+              )}
+            </p>
+
+            <p className="mt-4 text-[10px] font-semibold uppercase tracking-wider text-muted">
+              재실 작업자 ({zoneWorkers.length})
+            </p>
+            <ul className="mt-1.5 flex flex-col divide-y divide-hairline">
+              {zoneWorkers.map((w) => {
+                const pgas = PORTABLE_BY_WORKER.get(w.id)
+                return (
+                  <li key={w.id} className="flex items-center gap-2 py-1.5 text-[13px]">
+                    <span className={`size-2 shrink-0 rounded-full ${w.danger ? 'animate-pulse bg-critical' : 'bg-good'}`} />
+                    <span className="font-medium text-ink">{w.name}</span>
+                    <span className="text-[11px] text-muted">{w.space}</span>
+                    <span className={`ml-auto font-mono text-xs ${w.danger ? 'font-semibold text-critical' : 'text-ink-2'}`}>
+                      {w.heartRate}bpm
+                    </span>
+                    {pgas && (
+                      <span className="rounded-md bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] text-ink-2" title="이동형 가스검침기 휴대">
+                        {pgas.id}
+                      </span>
+                    )}
+                  </li>
+                )
+              })}
+              {zoneWorkers.length === 0 && <li className="py-1.5 text-xs text-muted">재실 작업자가 없습니다.</li>}
+            </ul>
+
+            <p className="mt-4 text-[10px] font-semibold uppercase tracking-wider text-muted">
+              고정형 가스검침기 ({zoneDets.length})
+            </p>
+            {zoneDets.map((d) => (
+              <div key={d.id} className="mt-1.5 rounded-[10px] bg-page/60 p-2.5">
+                <p className="font-mono text-[11px] text-ink">{d.id}</p>
+                <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1">
+                  {gasMetrics.map((m) => (
+                    <span key={m.key} className="text-[11px] text-muted">
+                      {m.label}{' '}
+                      <span className="font-mono font-semibold" style={{ color: m.color }}>
+                        {d[m.key]}
+                      </span>
+                      <span className="ml-0.5 text-[9px]">{m.unit}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+            {zoneDets.length === 0 && <p className="mt-1.5 text-xs text-muted">설치된 고정형 검침기가 없습니다.</p>}
+
+            <p className="mt-4 text-[10px] font-semibold uppercase tracking-wider text-muted">설비</p>
+            <div className="mt-1.5 grid grid-cols-3 gap-2">
+              {(
+                [
+                  ['비콘', zoneBeaconCnt],
+                  ['게이트웨이', zoneGwCnt],
+                  ['공동구 출입구', zoneEnts.length],
+                ] as const
+              ).map(([label, cnt]) => (
+                <div key={label} className="rounded-[10px] bg-page/60 px-2 py-2 text-center">
+                  <p className="text-lg font-bold text-ink" style={{ fontVariantNumeric: 'tabular-nums' }}>{cnt}</p>
+                  <p className="mt-0.5 text-[10px] text-muted">{label}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -622,10 +1191,12 @@ function HistoryPanel({
 export default function SiteMap() {
   const [tick, setTick] = useState(0)
   const [mode, setMode] = useState<ViewMode>('2d')
+  const [floor, setFloor] = useState<FloorId>('F1')
   const [bg, setBg] = useState<BgKind>('none')
   const [full, setFull] = useState(false)
   const [vb, setVb] = useState<ViewBox>(BASE)
   const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [detailZone, setDetailZone] = useState<string | null>(null)
 
   const wrapRef = useRef<HTMLDivElement>(null)
   const vbRef = useRef(vb)
@@ -669,14 +1240,18 @@ export default function SiteMap() {
 
   const onPointerDown = (e: React.PointerEvent) => {
     panRef.current = { x0: e.clientX, y0: e.clientY, vb0: vbRef.current, active: true, moved: false }
-    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    /* 주의: 여기서 setPointerCapture를 걸면 click이 래퍼로 리타게팅되어
+     * 구역(건물)·작업자 클릭이 무시된다 — 캡처는 드래그 확정 시점에 건다 */
   }
   const onPointerMove = (e: React.PointerEvent) => {
     const p = panRef.current
     if (!p.active || !wrapRef.current) return
     const dx = e.clientX - p.x0
     const dy = e.clientY - p.y0
-    if (Math.abs(dx) + Math.abs(dy) > 4) p.moved = true
+    if (!p.moved && Math.abs(dx) + Math.abs(dy) > 4) {
+      p.moved = true
+      ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId) // 화면 밖까지 팬 유지
+    }
     if (!p.moved) return
     const rect = wrapRef.current.getBoundingClientRect()
     const s = Math.min(rect.width / p.vb0.w, rect.height / p.vb0.h)
@@ -697,12 +1272,12 @@ export default function SiteMap() {
         full ? 'fixed inset-0 z-50 flex flex-col gap-2 bg-page p-4' : 'flex h-full min-h-0 flex-col gap-2'
       }
     >
-      <div className="flex shrink-0 items-center justify-between px-1">
-        <div className="flex items-baseline gap-2">
-          <h2 className="text-base font-medium text-ink">실시간 위치 관제</h2>
-          <span className="text-[11px] text-muted">비콘 {tracking}명 추적 중 · 1초 갱신</span>
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-y-1.5 px-1">
+        <div className="flex min-w-0 items-baseline gap-2">
+          <h2 className="whitespace-nowrap text-base font-medium text-ink">실시간 위치 관제</h2>
+          <span className="truncate text-[11px] text-muted">비콘 {tracking}명 추적 중 · 1초 갱신</span>
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
           {/* 배경 지도 (2D 전용 — 레거시 지도/스카이뷰 대응) */}
           <div
             className={`flex rounded-lg border border-hairline p-0.5 transition-opacity ${
@@ -719,11 +1294,30 @@ export default function SiteMap() {
               <button
                 key={v}
                 onClick={() => setBg(v)}
-                className={`h-7 cursor-pointer rounded-md px-2.5 text-xs font-semibold transition-colors ${
+                className={`h-7 cursor-pointer whitespace-nowrap rounded-md px-2.5 text-xs font-semibold transition-colors ${
                   bg === v ? 'bg-primary text-white' : 'text-ink-2 hover:bg-surface-2'
                 }`}
               >
                 {label}
+              </button>
+            ))}
+          </div>
+          {/* 층 선택 (2D 전용 — 2.5D는 전 층을 하나의 스택으로 표시) */}
+          <div
+            className={`flex rounded-lg border border-hairline p-0.5 transition-opacity ${
+              mode === '2.5d' ? 'pointer-events-none opacity-40' : ''
+            }`}
+          >
+            {floorDefs.map((f) => (
+              <button
+                key={f.id}
+                onClick={() => setFloor(f.id)}
+                className={`h-7 cursor-pointer whitespace-nowrap rounded-md px-2.5 text-xs font-semibold transition-colors ${
+                  floor === f.id ? 'bg-primary text-white' : 'text-ink-2 hover:bg-surface-2'
+                }`}
+                title={f.name}
+              >
+                {f.short}
               </button>
             ))}
           </div>
@@ -732,7 +1326,7 @@ export default function SiteMap() {
               <button
                 key={m}
                 onClick={() => setMode(m)}
-                className={`h-7 cursor-pointer rounded-md px-2.5 text-xs font-semibold transition-colors ${
+                className={`h-7 cursor-pointer whitespace-nowrap rounded-md px-2.5 text-xs font-semibold transition-colors ${
                   mode === m ? 'bg-primary text-white' : 'text-ink-2 hover:bg-surface-2'
                 }`}
               >
@@ -759,6 +1353,10 @@ export default function SiteMap() {
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
+        onClickCapture={(e) => {
+          /* 드래그 팬 직후의 클릭은 구역 상세/선택 해제로 이어지지 않게 차단 */
+          if (panRef.current.moved) e.stopPropagation()
+        }}
         onClick={() => {
           if (!panRef.current.moved) setSelectedId(null)
         }}
@@ -772,9 +1370,17 @@ export default function SiteMap() {
           {mode === '2d' && bg !== 'none' && (
             <TileLayer vb={vb} kind={bg} screenW={wrapRef.current?.clientWidth ?? 900} />
           )}
-          <StaticLayers mode={mode} k={k} showGrid={!(mode === '2d' && bg !== 'none')} />
-          {selected && !selected.outTime && <Trail worker={selected} tick={tick} mode={mode} />}
-          <WorkerLayer tick={tick} mode={mode} k={k} selectedId={selectedId} onSelect={setSelectedId} />
+          <StaticLayers
+            mode={mode}
+            floor={floor}
+            k={k}
+            showGrid={!(mode === '2d' && bg !== 'none')}
+            onZoneOpen={setDetailZone}
+          />
+          {selected && !selected.outTime && (mode === '2.5d' || workerFloor(selected) === floor) && (
+            <Trail worker={selected} tick={tick} mode={mode} />
+          )}
+          <WorkerLayer tick={tick} mode={mode} floor={floor} k={k} selectedId={selectedId} onSelect={setSelectedId} />
         </svg>
 
         {/* 줌 컨트롤 */}
@@ -835,6 +1441,7 @@ export default function SiteMap() {
           <span className="flex items-center gap-1.5">
             <span className="inline-block w-4 border-t-2 border-dashed border-s1" /> 지하 공동구
           </span>
+          <span className="text-muted">건물 클릭 → 상세 보기</span>
         </div>
 
         <div className="absolute bottom-3 right-3 flex items-center gap-2 text-[10px] text-muted">
@@ -843,6 +1450,16 @@ export default function SiteMap() {
           {mode === '2d' && <ScaleBar vb={vb} wrap={wrapRef.current} />}
         </div>
       </div>
+
+      {/* 건물 상세 모달 — 팬/줌 핸들러 밖에 렌더링, 구역 변경 시 리마운트 */}
+      {detailZone && (
+        <ZoneDetailModal
+          key={detailZone}
+          zone={zones.find((z) => z.name === detailZone)!}
+          tick={tick}
+          onClose={() => setDetailZone(null)}
+        />
+      )}
     </div>
   )
 }
