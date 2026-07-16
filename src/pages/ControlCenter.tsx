@@ -522,7 +522,7 @@ function WorkListTable() {
           </span>
         )}
       </div>
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div className="scrollbar-mini max-h-[340px] min-h-0 flex-1 overflow-auto">
         <table className="w-full min-w-[860px]">
           <thead className="sticky top-0 bg-surface-1">
             <tr className="border-b border-hairline">
@@ -715,10 +715,11 @@ function TabGrid() {
           Results : {TAB_COUNTS[tab]}
         </span>
       </div>
+      {/* 탭 본문 — 세로로 카드가 길어지지 않게 높이 캡 + 미니 스크롤 */}
       {tab === '작업 목록' ? (
         <WorkListTable />
       ) : (
-        <div className="min-h-0 flex-1 overflow-auto">
+        <div className="scrollbar-mini max-h-[380px] min-h-0 flex-1 overflow-auto">
           {tab === '작업자' && <WorkerTable />}
           {tab === '이동형 검침기' && <PortableGasTable />}
           {tab === '고정형 비콘' && <BeaconTable />}

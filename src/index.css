@@ -129,6 +129,23 @@ body {
   background: var(--text-muted);
 }
 
+/* 4px 미니 스크롤바 — 카드 내부 목록용 (트랙 투명 · 둥근 썸) */
+.scrollbar-mini {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 40%, transparent) transparent;
+}
+.scrollbar-mini::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+.scrollbar-mini::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-muted) 35%, transparent);
+  border-radius: 999px;
+}
+.scrollbar-mini::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
 /* Recharts chrome: recessive grid/axes, muted tick labels */
 .recharts-cartesian-axis-tick text {
   fill: var(--text-muted);
