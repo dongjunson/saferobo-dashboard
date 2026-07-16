@@ -22,6 +22,7 @@ import {
   liveWorkers,
   mapBeacons,
   portableGasDetectors,
+  rooms,
   stairwells,
   tunnelEntrances,
   utilityTunnels,
@@ -72,6 +73,7 @@ const ALL_LAYERS_ON: Record<LayerKey, boolean> = {
   gas: true,
   tunnels: true,
   stairs: true,
+  rooms: true,
 }
 
 function LayerIcon({ k, is3d }: { k: LayerKey; is3d: boolean }) {
@@ -130,6 +132,13 @@ function LayerIcon({ k, is3d }: { k: LayerKey; is3d: boolean }) {
       ) : (
         <span className="inline-block w-4 border-t-2 border-dashed border-s1" />
       )
+    case 'rooms':
+      return (
+        <svg width="15" height="15" viewBox="0 0 16 16">
+          <rect x="2" y="3" width="12" height="10" rx="1" fill="none" stroke="var(--axis-line)" strokeWidth="1.2" />
+          <line x1="8" y1="3" x2="8" y2="13" stroke="var(--axis-line)" strokeWidth="1" strokeDasharray="2 1.5" />
+        </svg>
+      )
     case 'stairs':
       return is3d ? (
         /* 3D: 계단 플라이트 */
@@ -151,6 +160,7 @@ function LayerIcon({ k, is3d }: { k: LayerKey; is3d: boolean }) {
 
 const LAYER_ROWS: Array<{ key: LayerKey; label: string }> = [
   { key: 'workers', label: '작업자 · 이동형 검침기' },
+  { key: 'rooms', label: '작업영역(Room)' },
   { key: 'beacons', label: '고정형 비콘' },
   { key: 'gateways', label: '게이트웨이' },
   { key: 'gas', label: '고정형 가스검침기' },
@@ -337,7 +347,11 @@ const StaticLayers = memo(function StaticLayers({
       const z = zones.find((zz) => zz.name === s.zone)
       return z?.floors.includes(floor) && LV_ORDER[floor] >= LV_ORDER[s.toLevel]
     })
-    return { gridLines, zs, bs, gs, gds, tns, tl, stairs }
+    /* 작업영역(Room) — 현재 층의 건물 내 세부 구획. 이름은 구획 상단에 */
+    const rms = rooms
+      .filter((r) => r.level === floor)
+      .map((r) => ({ ...r, ly: Math.min(...parsePoints(r.points).map((p) => p[1])) + 11 }))
+    return { gridLines, zs, bs, gs, gds, tns, tl, stairs, rms }
   }, [floor])
 
   const fontSize = Math.max(6, Math.min(14, 12 * k))
@@ -445,6 +459,33 @@ const StaticLayers = memo(function StaticLayers({
           </g>
         )
       })}
+      {/* 작업영역(Room) — 건물 내 세부 구획: 점선 구획선 + 이름 */}
+      {show.rooms && layers.rms.map((r) => (
+        <g key={r.id} pointerEvents="none">
+          <polygon
+            points={r.points}
+            fill="none"
+            stroke="var(--axis-line)"
+            strokeOpacity="0.7"
+            strokeWidth="1"
+            strokeDasharray="3 3"
+            vectorEffect="non-scaling-stroke"
+          />
+          <text
+            x={r.labelX}
+            y={r.ly}
+            textAnchor="middle"
+            fontSize={fontSize * 0.7}
+            fill="var(--text-muted)"
+            opacity="0.95"
+            paintOrder="stroke"
+            stroke="var(--page)"
+            strokeWidth="2"
+          >
+            {r.name}
+          </text>
+        </g>
+      ))}
       {show.beacons && showDevices && layers.bs.map((b) => (
         <g key={b.id} transform={`translate(${b.x}, ${b.y}) scale(${km})`}>
           <rect x="-4.5" y="-4.5" width="9" height="9" rx="2" fill="var(--series-4)" opacity="0.9">
@@ -851,6 +892,28 @@ function ZoneDetailModal({
                     <animate attributeName="fill-opacity" values="0.13;0.24;0.13" dur="2s" repeatCount="indefinite" />
                   )}
                 </polygon>
+                {/* 작업영역(Room) — 선택 층의 건물 내 구획 */}
+                {rooms
+                  .filter((r) => r.zone === zone.name && r.level === fl)
+                  .map((r) => (
+                    <g key={r.id}>
+                      <polygon
+                        points={r.points}
+                        fill="var(--series-1)"
+                        fillOpacity="0.04"
+                        stroke="var(--axis-line)"
+                        strokeOpacity="0.6"
+                        strokeWidth="1"
+                        strokeDasharray="4 3"
+                        vectorEffect="non-scaling-stroke"
+                      >
+                        <title>{`${r.name} · ${FLOOR_SHORT[r.level]}`}</title>
+                      </polygon>
+                      <text x={r.labelX} y={r.labelY} textAnchor="middle" fontSize={9 * msc} fill="var(--text-secondary)">
+                        {r.name}
+                      </text>
+                    </g>
+                  ))}
                 {/* 공동구 출입구 */}
                 {tunnelEntrances.map((e) => (
                   <g key={e.id} transform={`translate(${e.x}, ${e.y}) scale(${msc})`}>

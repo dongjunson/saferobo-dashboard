@@ -47,7 +47,7 @@ export const zones: Zone[] = [
   { id: 'Z2', name: '탈수기동', points: '330,140 470,140 470,230 330,230', labelX: 400, labelY: 189, floors: ['F1'] },
   { id: 'Z3', name: '축산전처리동', points: '130,370 320,370 320,480 130,480', labelX: 225, labelY: 429, floors: ['F1', 'B1'] },
   { id: 'Z4', name: '관리동', points: '420,300 580,300 580,400 420,400', labelX: 500, labelY: 354, floors: ['F1'] },
-  { id: 'Z5', name: '금수동', points: '650,180 790,180 790,270 650,270', labelX: 720, labelY: 229, floors: ['F1'] },
+  { id: 'Z5', name: '급수동', points: '650,180 790,180 790,270 650,270', labelX: 720, labelY: 229, floors: ['F1'] },
   { id: 'Z6', name: '실험동', points: '440,460 570,460 570,545 440,545', labelX: 505, labelY: 507, floors: ['B1'] },
   { id: 'Z7', name: '전기실', points: '660,400 780,400 780,470 660,470', labelX: 720, labelY: 439, floors: ['F1', 'B1'] },
   { id: 'Z8', name: '소화조동', points: '820,190 935,190 935,290 820,290', labelX: 877, labelY: 244, floors: ['F1', 'B1'] },
@@ -63,6 +63,59 @@ export interface MapPoint {
   /** 설치 층 — 생략 시 지상층(F1) */
   level?: FloorId
 }
+
+/* ── 작업영역(Room) — 건물 내 층별 세부 작업 구획 ─────────────────── */
+export interface Room {
+  id: string
+  zone: string
+  level: FloorId
+  name: string
+  points: string // SVG polygon (건물 내부 구획)
+  labelX: number
+  labelY: number
+}
+
+export const rooms: Room[] = [
+  /* 하수유입동 (지상·지하1·지하2) */
+  { id: 'RM-01', zone: '하수유입동', level: 'F1', name: '유입 게이트실', points: '126,226 197,226 197,314 126,314', labelX: 161, labelY: 273 },
+  { id: 'RM-02', zone: '하수유입동', level: 'F1', name: '스크린실', points: '203,226 274,226 274,314 203,314', labelX: 238, labelY: 273 },
+  { id: 'RM-03', zone: '하수유입동', level: 'B1', name: '침사지', points: '126,226 197,226 197,314 126,314', labelX: 161, labelY: 273 },
+  { id: 'RM-04', zone: '하수유입동', level: 'B1', name: '유입펌프실', points: '203,226 274,226 274,314 203,314', labelX: 238, labelY: 273 },
+  { id: 'RM-05', zone: '하수유입동', level: 'B2', name: '심층 펌프실', points: '126,226 197,226 197,314 126,314', labelX: 161, labelY: 273 },
+  { id: 'RM-06', zone: '하수유입동', level: 'B2', name: '배관 갤러리', points: '203,226 274,226 274,314 203,314', labelX: 238, labelY: 273 },
+  /* 탈수기동 (지상) */
+  { id: 'RM-07', zone: '탈수기동', level: 'F1', name: '탈수기실', points: '336,146 397,146 397,224 336,224', labelX: 366, labelY: 187 },
+  { id: 'RM-08', zone: '탈수기동', level: 'F1', name: '케이크 반출장', points: '403,146 464,146 464,224 403,224', labelX: 433, labelY: 187 },
+  /* 축산전처리동 (지상·지하1) */
+  { id: 'RM-09', zone: '축산전처리동', level: 'F1', name: '반입 호퍼실', points: '136,376 219,376 219,474 136,474', labelX: 177, labelY: 427 },
+  { id: 'RM-10', zone: '축산전처리동', level: 'F1', name: '파쇄실', points: '231,376 314,376 314,474 231,474', labelX: 272, labelY: 427 },
+  { id: 'RM-11', zone: '축산전처리동', level: 'B1', name: '전처리조', points: '136,376 219,376 219,474 136,474', labelX: 177, labelY: 427 },
+  { id: 'RM-12', zone: '축산전처리동', level: 'B1', name: '협잡물 처리실', points: '231,376 314,376 314,474 231,474', labelX: 272, labelY: 427 },
+  /* 관리동 (지상) */
+  { id: 'RM-13', zone: '관리동', level: 'F1', name: '중앙제어실', points: '426,306 471,306 471,394 426,394', labelX: 448, labelY: 352 },
+  { id: 'RM-14', zone: '관리동', level: 'F1', name: '사무실', points: '477,306 522,306 522,394 477,394', labelX: 499, labelY: 352 },
+  { id: 'RM-15', zone: '관리동', level: 'F1', name: '회의실', points: '528,306 574,306 574,394 528,394', labelX: 551, labelY: 352 },
+  /* 급수동 (지상) */
+  { id: 'RM-16', zone: '급수동', level: 'F1', name: '가압 펌프실', points: '656,186 717,186 717,264 656,264', labelX: 686, labelY: 227 },
+  { id: 'RM-17', zone: '급수동', level: 'F1', name: '배수지 밸브실', points: '723,186 784,186 784,264 723,264', labelX: 753, labelY: 227 },
+  /* 실험동 (지하1) */
+  { id: 'RM-18', zone: '실험동', level: 'B1', name: '수질분석실', points: '446,466 502,466 502,539 446,539', labelX: 474, labelY: 504 },
+  { id: 'RM-19', zone: '실험동', level: 'B1', name: '시약보관실', points: '508,466 564,466 564,539 508,539', labelX: 536, labelY: 504 },
+  /* 전기실 (지상·지하1) */
+  { id: 'RM-20', zone: '전기실', level: 'F1', name: '수배전반실', points: '666,406 717,406 717,464 666,464', labelX: 691, labelY: 437 },
+  { id: 'RM-21', zone: '전기실', level: 'F1', name: '발전기실', points: '723,406 774,406 774,464 723,464', labelX: 748, labelY: 437 },
+  { id: 'RM-22', zone: '전기실', level: 'B1', name: '케이블 피트', points: '666,406 774,406 774,464 666,464', labelX: 720, labelY: 437 },
+  /* 소화조동 (지상·지하1) */
+  { id: 'RM-23', zone: '소화조동', level: 'F1', name: '가스 제어실', points: '826,196 929,196 929,237 826,237', labelX: 877, labelY: 219 },
+  { id: 'RM-24', zone: '소화조동', level: 'F1', name: '순환 펌프실', points: '826,243 929,243 929,284 826,284', labelX: 877, labelY: 266 },
+  { id: 'RM-25', zone: '소화조동', level: 'B1', name: '소화조 하부 기계실', points: '826,196 929,196 929,284 826,284', labelX: 877, labelY: 242 },
+  /* 약품투입동 (지상) */
+  { id: 'RM-26', zone: '약품투입동', level: 'F1', name: '약품저장실', points: '836,346 882,346 882,404 836,404', labelX: 859, labelY: 377 },
+  { id: 'RM-27', zone: '약품투입동', level: 'F1', name: '투입 펌프실', points: '888,346 934,346 934,404 888,404', labelX: 911, labelY: 377 },
+  /* 슬러지건조동 (지상) */
+  { id: 'RM-28', zone: '슬러지건조동', level: 'F1', name: '건조기실', points: '606,486 662,486 662,554 606,554', labelX: 634, labelY: 522 },
+  { id: 'RM-29', zone: '슬러지건조동', level: 'F1', name: '반출장', points: '668,486 724,486 724,554 668,554', labelX: 696, labelY: 522 },
+]
 
 /* ── 지하 공동구(유틸리티 터널) — 주요 동을 잇는 지하 코리도 ──────────
  * path는 지도 좌표 폴리라인. 출입구는 각 동 접속부의 수직구/계단실. */
@@ -118,7 +171,7 @@ export const gateways: MapPoint[] = [
   { id: 'GW-0018', x: 458, y: 152, zone: '탈수기동' },
   { id: 'GW-0034', x: 308, y: 468, zone: '축산전처리동' },
   { id: 'GW-0022', x: 568, y: 312, zone: '관리동' },
-  { id: 'GW-0027', x: 778, y: 192, zone: '금수동' },
+  { id: 'GW-0027', x: 778, y: 192, zone: '급수동' },
   { id: 'GW-0031', x: 672, y: 458, zone: '전기실' },
   { id: 'GW-0042', x: 928, y: 202, zone: '소화조동' },
 ]
@@ -133,8 +186,8 @@ export const mapBeacons: MapPoint[] = [
   { id: 'BC-1143', x: 225, y: 425, zone: '축산전처리동' },
   { id: 'BC-1161', x: 445, y: 320, zone: '관리동' },
   { id: 'BC-1162', x: 555, y: 380, zone: '관리동' },
-  { id: 'BC-1181', x: 675, y: 200, zone: '금수동' },
-  { id: 'BC-1182', x: 765, y: 250, zone: '금수동' },
+  { id: 'BC-1181', x: 675, y: 200, zone: '급수동' },
+  { id: 'BC-1182', x: 765, y: 250, zone: '급수동' },
   { id: 'BC-1201', x: 465, y: 480, zone: '실험동', level: 'B1' },
   { id: 'BC-1202', x: 545, y: 525, zone: '실험동', level: 'B1' },
   { id: 'BC-1221', x: 700, y: 420, zone: '전기실' },
@@ -182,7 +235,7 @@ export const liveWorkers: LiveWorker[] = [
   { id: 2, name: '박영호', vendor: '서해산업', space: '지상층', zone: '하수유입동', inTime: '07:03', outTime: null, heartRate: 96, skinTemp: 33.1, danger: false, path: [[160, 250], [250, 300], [200, 280], [140, 265]], speed: 8, offset: 40 },
   { id: 3, name: '이민재', vendor: '금강ENG', space: '지상층', zone: '관리동', inTime: '07:45', outTime: null, heartRate: 88, skinTemp: 32.8, danger: false, path: [[445, 320], [555, 380], [500, 350]], speed: 7, offset: 90 },
   { id: 4, name: '최성훈', vendor: '대한중공업', space: '지하층', zone: '축산전처리동', inTime: '06:58', outTime: null, heartRate: 74, skinTemp: 31.9, danger: false, path: [[165, 395], [290, 455], [225, 425]], speed: 9, offset: 10 },
-  { id: 5, name: '정우진', vendor: '남도기공', space: '지상층', zone: '금수동', inTime: '07:31', outTime: null, heartRate: 81, skinTemp: 32.4, danger: false, path: [[675, 200], [765, 250], [720, 225]], speed: 6, offset: 60 },
+  { id: 5, name: '정우진', vendor: '남도기공', space: '지상층', zone: '급수동', inTime: '07:31', outTime: null, heartRate: 81, skinTemp: 32.4, danger: false, path: [[675, 200], [765, 250], [720, 225]], speed: 6, offset: 60 },
   { id: 6, name: '한지훈', vendor: '서해산업', space: '지하층', zone: '실험동', inTime: '08:02', outTime: null, heartRate: 79, skinTemp: 32.0, danger: false, path: [[465, 480], [545, 525], [505, 500]], speed: 5, offset: 25 },
   { id: 7, name: '임동혁', vendor: '대한중공업', space: '지상층', zone: '전기실', inTime: '07:55', outTime: null, heartRate: 92, skinTemp: 33.4, danger: false, path: [[700, 420], [760, 445], [680, 450]], speed: 6, offset: 35 },
   { id: 8, name: '오세영', vendor: '금강ENG', space: '지상층', zone: '관리동', inTime: '07:19', outTime: '16:40', heartRate: 0, skinTemp: 0, danger: false, path: [[520, 330]], speed: 0, offset: 0 },

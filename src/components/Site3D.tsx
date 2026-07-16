@@ -8,6 +8,7 @@ import {
   gateways,
   liveWorkers,
   mapBeacons,
+  rooms,
   stairwells,
   tunnelEntrances,
   utilityTunnels,
@@ -28,7 +29,7 @@ const FLOOR_H = 25 // 층고 (시각화용 과장 스케일)
 const LEVEL_Y: Record<FloorId, number> = { F1: 0, B1: -FLOOR_H, B2: -FLOOR_H * 2 }
 
 /** 범례 패널에서 토글하는 표시 레이어 */
-export type LayerKey = 'workers' | 'beacons' | 'gateways' | 'gas' | 'tunnels' | 'stairs'
+export type LayerKey = 'workers' | 'beacons' | 'gateways' | 'gas' | 'tunnels' | 'stairs' | 'rooms'
 
 const ZONE_RISK_3D = new Map(assessZoneRisks().map((r) => [r.zone, r.level]))
 
@@ -98,6 +99,7 @@ export default function Site3D({
       gas: [],
       tunnels: [],
       stairs: [],
+      rooms: [],
     }
 
     /* 포커스 건물 bbox — 주변 여백 내 요소만 표시 */
@@ -242,6 +244,27 @@ export default function Site3D({
         scene.add(pEdge)
       }
 
+    }
+
+    /* ── 작업영역(Room) — 층 바닥판 위 구획선 (포커스 모드에선 이름 포함) ── */
+    const roomMat = new THREE.LineBasicMaterial({ color: col.grid, transparent: true, opacity: 0.85 })
+    for (const r of rooms) {
+      if (focus && r.zone !== focus.name) continue
+      const pts = parsePts(r.points)
+      const y = LEVEL_Y[r.level] + 0.4
+      const loop = pts.map(([x, z]) => new THREE.Vector3(x, y, z))
+      loop.push(loop[0].clone())
+      const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(loop), roomMat)
+      scene.add(line)
+      layerObjs.rooms.push(line)
+      if (focus) {
+        const cx = (Math.min(...pts.map((p) => p[0])) + Math.max(...pts.map((p) => p[0]))) / 2
+        const cz = (Math.min(...pts.map((p) => p[1])) + Math.max(...pts.map((p) => p[1]))) / 2
+        const lbl = textSprite(r.name, col.label, 0.12)
+        lbl.position.set(cx, y + 4, cz)
+        scene.add(lbl)
+        layerObjs.rooms.push(lbl)
+      }
     }
 
     /* ── 계단실 — 설치된 건물에만(복수 개소 가능).
