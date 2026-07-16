@@ -2,6 +2,7 @@ import { lazy, memo, Suspense, useEffect, useMemo, useRef, useState } from 'reac
 import {
   ChevronDown,
   ChevronUp,
+  Layers,
   LocateFixed,
   Maximize2,
   Minimize2,
@@ -10,6 +11,7 @@ import {
   Wifi,
   X,
 } from 'lucide-react'
+import type { LayerKey } from './Site3D'
 import {
   assessZoneRisks,
   floorDefs,
@@ -20,6 +22,7 @@ import {
   liveWorkers,
   mapBeacons,
   portableGasDetectors,
+  stairwells,
   tunnelEntrances,
   utilityTunnels,
   workerFloor,
@@ -60,6 +63,100 @@ const RISK_CHIP: Record<GasLevel, { label: string; cls: string }> = {
   good: { label: '정상', cls: 'bg-good/10 text-good border-good/35' },
 }
 const PORTABLE_BY_WORKER = new Map(portableGasDetectors.map((p) => [p.workerId, p]))
+
+/* ── 레이어 범례 — 모드별 실제 마커 모양과 일치하는 아이콘 ─────────── */
+const ALL_LAYERS_ON: Record<LayerKey, boolean> = {
+  workers: true,
+  beacons: true,
+  gateways: true,
+  gas: true,
+  tunnels: true,
+  stairs: true,
+}
+
+function LayerIcon({ k, is3d }: { k: LayerKey; is3d: boolean }) {
+  switch (k) {
+    case 'workers':
+      return (
+        <span className="relative inline-flex">
+          <span className="inline-block size-2.5 rounded-full bg-good" />
+          <span className="absolute -right-1 -top-1 inline-block size-2 rotate-45 rounded-[1px] bg-s3" />
+        </span>
+      )
+    case 'beacons':
+      return is3d ? (
+        /* 3D: 원형 퍽 + 돔 */
+        <svg width="15" height="15" viewBox="0 0 16 16">
+          <ellipse cx="8" cy="11.2" rx="5.4" ry="2.4" fill="var(--series-4)" />
+          <path d="M3.6 10.6 A4.4 3.8 0 0 1 12.4 10.6 Z" fill="#c4b5fd" />
+        </svg>
+      ) : (
+        <span className="relative inline-flex size-3 items-center justify-center rounded-[3px] bg-s4">
+          <span className="size-1 rounded-[1px] bg-surface-1" />
+        </span>
+      )
+    case 'gateways':
+      return is3d ? (
+        /* 3D: 함체 + 안테나 2본 */
+        <svg width="15" height="15" viewBox="0 0 16 16">
+          <rect x="5" y="7" width="6" height="7.5" rx="1" fill="var(--series-1)" />
+          <line x1="6.4" y1="7" x2="6.4" y2="2.6" stroke="#cbd5e1" strokeWidth="0.9" />
+          <line x1="9.6" y1="7" x2="9.6" y2="2.6" stroke="#cbd5e1" strokeWidth="0.9" />
+          <circle cx="6.4" cy="2.2" r="0.9" fill="#cbd5e1" />
+          <circle cx="9.6" cy="2.2" r="0.9" fill="#cbd5e1" />
+        </svg>
+      ) : (
+        <span className="text-s1">
+          <Wifi size={13} />
+        </span>
+      )
+    case 'gas':
+      return is3d ? (
+        /* 3D: 함체 + 하부 센서 헤드 */
+        <svg width="15" height="15" viewBox="0 0 16 16">
+          <rect x="4.5" y="2.5" width="7" height="8" rx="1" fill="var(--series-3)" />
+          <rect x="6.2" y="10.5" width="3.6" height="3" rx="1.2" fill="#64748b" />
+        </svg>
+      ) : (
+        <span className="inline-block size-2.5 rotate-45 rounded-[2px] bg-s3" />
+      )
+    case 'tunnels':
+      return is3d ? (
+        /* 3D: U자 통로 채널 */
+        <svg width="15" height="15" viewBox="0 0 16 16">
+          <path d="M3 5 L3 11 L13 11 L13 5" fill="none" stroke="var(--series-1)" strokeWidth="1.6" strokeLinejoin="round" />
+          <rect x="3" y="10" width="10" height="1.6" fill="var(--series-1)" opacity="0.7" />
+        </svg>
+      ) : (
+        <span className="inline-block w-4 border-t-2 border-dashed border-s1" />
+      )
+    case 'stairs':
+      return is3d ? (
+        /* 3D: 계단 플라이트 */
+        <svg width="15" height="15" viewBox="0 0 16 16">
+          <path d="M2.5 13 H6 V9.8 H9.5 V6.6 H13 V3.4" fill="none" stroke="#94a3b8" strokeWidth="1.5" strokeLinejoin="round" />
+        </svg>
+      ) : (
+        <svg width="15" height="15" viewBox="0 0 16 16">
+          <rect x="1.5" y="4" width="13" height="8" rx="1" fill="none" stroke="var(--axis-line)" strokeWidth="1" />
+          {[4.5, 7, 9.5].map((x) => (
+            <line key={x} x1={x} y1="4" x2={x} y2="12" stroke="var(--axis-line)" strokeWidth="1" />
+          ))}
+          <line x1="12.2" y1="5.6" x2="12.2" y2="10.4" stroke="var(--text-muted)" strokeWidth="1" />
+          <path d="M11.2 6.6 L12.2 5.4 L13.2 6.6 M11.2 9.4 L12.2 10.6 L13.2 9.4" fill="none" stroke="var(--text-muted)" strokeWidth="1" />
+        </svg>
+      )
+  }
+}
+
+const LAYER_ROWS: Array<{ key: LayerKey; label: string }> = [
+  { key: 'workers', label: '작업자 · 이동형 검침기' },
+  { key: 'beacons', label: '고정형 비콘' },
+  { key: 'gateways', label: '게이트웨이' },
+  { key: 'gas', label: '고정형 가스검침기' },
+  { key: 'tunnels', label: '지하 공동구 · 출입구' },
+  { key: 'stairs', label: '계단실' },
+]
 
 interface ViewBox {
   x: number
@@ -208,11 +305,13 @@ const StaticLayers = memo(function StaticLayers({
   floor,
   k,
   showGrid = true,
+  show,
   onZoneOpen,
 }: {
   floor: FloorId
   k: number
   showGrid?: boolean
+  show: Record<LayerKey, boolean>
   onZoneOpen: (name: string) => void
 }) {
   const layers = useMemo(() => {
@@ -231,7 +330,14 @@ const StaticLayers = memo(function StaticLayers({
       .filter((t) => t.level === floor)
       .map((t) => ({ ...t, pts: toStr(t.path) }))
     const tl = floor === 'B1' ? { x: 620, y: 330 } : floor === 'B2' ? { x: 745, y: 330 } : null
-    return { gridLines, zs, bs, gs, gds, tns, tl }
+
+    /* 계단실 — 설치된 건물에만(복수 개소 가능). 건물이 현재 층에
+     * 표시될 때만, 그리고 계단이 지나는 층 범위에서만 보인다. */
+    const stairs = stairwells.filter((s) => {
+      const z = zones.find((zz) => zz.name === s.zone)
+      return z?.floors.includes(floor) && LV_ORDER[floor] >= LV_ORDER[s.toLevel]
+    })
+    return { gridLines, zs, bs, gs, gds, tns, tl, stairs }
   }, [floor])
 
   const fontSize = Math.max(6, Math.min(14, 12 * k))
@@ -246,7 +352,7 @@ const StaticLayers = memo(function StaticLayers({
         ))}
       {/* 지하 공동구 — 몸체는 불투명 스트로크를 그룹에 모아 그룹 opacity로 합성:
        * 분기·코너에서 라인이 겹쳐도 색이 진해지지 않는다. */}
-      {layers.tns.length > 0 && (
+      {show.tunnels && layers.tns.length > 0 && (
         <g>
           <g opacity={floor === 'B2' ? 0.12 : 0.16}>
             {layers.tns.map((t) => (
@@ -279,7 +385,7 @@ const StaticLayers = memo(function StaticLayers({
           </g>
         </g>
       )}
-      {layers.tl && (
+      {show.tunnels && layers.tl && (
         <text
           x={layers.tl.x}
           y={layers.tl.y}
@@ -339,7 +445,7 @@ const StaticLayers = memo(function StaticLayers({
           </g>
         )
       })}
-      {showDevices && layers.bs.map((b) => (
+      {show.beacons && showDevices && layers.bs.map((b) => (
         <g key={b.id} transform={`translate(${b.x}, ${b.y}) scale(${km})`}>
           <rect x="-4.5" y="-4.5" width="9" height="9" rx="2" fill="var(--series-4)" opacity="0.9">
             <title>{`${b.id} · ${b.zone}`}</title>
@@ -347,7 +453,7 @@ const StaticLayers = memo(function StaticLayers({
           <rect x="-1.8" y="-1.8" width="3.6" height="3.6" rx="1" fill="var(--surface-1)" />
         </g>
       ))}
-      {showDevices && layers.gs.map((g) => (
+      {show.gateways && showDevices && layers.gs.map((g) => (
         <g key={g.id} transform={`translate(${g.x}, ${g.y}) scale(${km})`}>
           <circle r="10" fill="var(--series-1)" opacity="0.95">
             <title>{`${g.id} · ${g.zone}`}</title>
@@ -357,7 +463,7 @@ const StaticLayers = memo(function StaticLayers({
         </g>
       ))}
       {/* 고정형 가스검침기 — 마름모 마커, 판정 등급 색상 */}
-      {showDevices && layers.gds.map((g) => (
+      {show.gas && showDevices && layers.gds.map((g) => (
         <g key={g.id} transform={`translate(${g.x}, ${g.y}) scale(${km})`}>
           {g.lvl === 'critical' && (
             <circle r="12" fill="none" stroke={GAS_COLOR[g.lvl]} strokeWidth="2" opacity="0.7">
@@ -386,7 +492,7 @@ const StaticLayers = memo(function StaticLayers({
         </g>
       ))}
       {/* 공동구 출입구(수직구·계단실) */}
-      {showDevices && tunnelEntrances.map((e) => (
+      {show.tunnels && showDevices && tunnelEntrances.map((e) => (
         <g key={e.id} transform={`translate(${e.x}, ${e.y}) scale(${km})`}>
           <rect x="-4" y="-4" width="8" height="8" rx="1.5" fill="var(--surface-1)" stroke="var(--series-1)" strokeWidth="1.4">
             <title>{`${e.id} · ${e.zone} 공동구 출입구 (${FLOOR_SHORT[e.level ?? 'B1']} 연결)`}</title>
@@ -402,9 +508,55 @@ const StaticLayers = memo(function StaticLayers({
           />
         </g>
       ))}
+      {/* 건물 계단실 — 상하층 이동 (건축 도면식 심볼 + ↕) */}
+      {show.stairs && layers.stairs.map((s) => (
+        <StairSymbol
+          key={s.id}
+          x={s.x}
+          y={s.y}
+          title={`${s.id} 계단실 · ${s.zone} (${FLOOR_SHORT[s.toLevel]}~지상 연결)`}
+        />
+      ))}
     </>
   )
 })
+
+/* ── 계단실 심볼 — 러그(디딤판) + 상하 화살표 ─────────────────────── */
+function StairSymbol({ x, y, title }: { x: number; y: number; title: string }) {
+  return (
+    <g transform={`translate(${x}, ${y})`} opacity="0.95">
+      <title>{title}</title>
+      <rect
+        x="-14"
+        y="-9"
+        width="28"
+        height="18"
+        rx="2"
+        fill="var(--surface-1)"
+        fillOpacity="0.75"
+        stroke="var(--axis-line)"
+        strokeWidth="1"
+        vectorEffect="non-scaling-stroke"
+      />
+      {[-10, -6, -2, 2].map((rx) => (
+        <line
+          key={rx}
+          x1={rx}
+          y1={-9}
+          x2={rx}
+          y2={9}
+          stroke="var(--axis-line)"
+          strokeWidth="1"
+          vectorEffect="non-scaling-stroke"
+        />
+      ))}
+      {/* ↕ 상하 이동 화살표 */}
+      <line x1="8.5" y1="-5.5" x2="8.5" y2="5.5" stroke="var(--text-muted)" strokeWidth="1.2" vectorEffect="non-scaling-stroke" />
+      <path d="M6.6,-3.6 L8.5,-6 L10.4,-3.6" fill="none" stroke="var(--text-muted)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+      <path d="M6.6,3.6 L8.5,6 L10.4,3.6" fill="none" stroke="var(--text-muted)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+    </g>
+  )
+}
 
 /* ── 선택 작업자 이동 궤적 (최근 60초) ────────────────────────────── */
 function Trail({ worker, tick }: { worker: LiveWorker; tick: number }) {
@@ -708,6 +860,17 @@ function ZoneDetailModal({
                     <path d="M-2,-1 L0,1.6 L2,-1" fill="none" stroke="var(--series-1)" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" pointerEvents="none" />
                   </g>
                 ))}
+                {/* 계단실 — 상하층 이동 (설치된 건물만, 복수 개소 가능) */}
+                {stairwells
+                  .filter((s) => s.zone === zone.name)
+                  .map((s) => (
+                    <StairSymbol
+                      key={s.id}
+                      x={s.x}
+                      y={s.y}
+                      title={`${s.id} 계단실 · ${s.zone} (${FLOOR_SHORT[s.toLevel]}~지상 연결)`}
+                    />
+                  ))}
                 {/* 비콘 */}
                 {beacons.map((b) => (
                   <g key={b.id} transform={`translate(${b.x}, ${b.y}) scale(${msc})`}>
@@ -946,6 +1109,8 @@ export default function SiteMap() {
   const [vb, setVb] = useState<ViewBox>(BASE)
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [detailZone, setDetailZone] = useState<string | null>(null)
+  const [legendOpen, setLegendOpen] = useState(false)
+  const [layersOn, setLayersOn] = useState<Record<LayerKey, boolean>>(ALL_LAYERS_ON)
 
   const wrapRef = useRef<HTMLDivElement>(null)
   const vbRef = useRef(vb)
@@ -1153,12 +1318,15 @@ export default function SiteMap() {
               floor={floor}
               k={k}
               showGrid={bg === 'none'}
+              show={layersOn}
               onZoneOpen={setDetailZone}
             />
-            {selected && !selected.outTime && workerFloor(selected) === floor && (
+            {layersOn.workers && selected && !selected.outTime && workerFloor(selected) === floor && (
               <Trail worker={selected} tick={tick} />
             )}
-            <WorkerLayer tick={tick} floor={floor} k={k} selectedId={selectedId} onSelect={setSelectedId} />
+            {layersOn.workers && (
+              <WorkerLayer tick={tick} floor={floor} k={k} selectedId={selectedId} onSelect={setSelectedId} />
+            )}
           </svg>
         ) : (
           /* three.js 3D 뷰 — OrbitControls 회전·줌·팬 */
@@ -1170,7 +1338,7 @@ export default function SiteMap() {
             }
           >
             {/* 3D는 층 구분 없이 전체 사업소(건물·공동구)를 모두 표시, 건물 클릭 → 상세 */}
-            <Site3D onZoneOpen={setDetailZone} />
+            <Site3D onZoneOpen={setDetailZone} layers={layersOn} />
           </Suspense>
         )}
 
@@ -1207,36 +1375,61 @@ export default function SiteMap() {
           <HistoryPanel worker={selected} tick={tick} onClose={() => setSelectedId(null)} />
         )}
 
-        {/* 범례 */}
-        <div className="absolute bottom-3 left-3 flex max-w-[calc(100%-150px)] flex-wrap items-center gap-x-3.5 gap-y-1 rounded-[10px] border border-hairline bg-surface-1/85 px-3 py-2 text-[11px] text-ink-2 backdrop-blur-sm">
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block size-2.5 rounded-full bg-good" /> 작업자
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block size-2.5 animate-pulse rounded-full bg-critical" /> 위험
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block size-2.5 rounded-[3px] bg-s4" /> 고정형 비콘
-          </span>
-          <span className="flex items-center gap-1.5 text-s1">
-            <Wifi size={12} /> <span className="text-ink-2">게이트웨이</span>
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block size-2.5 rotate-45 rounded-[2px] bg-s3" /> 고정형 검침기
-          </span>
-          <span className="flex items-center gap-2">
-            <span className="relative inline-flex">
-              <span className="inline-block size-2.5 rounded-full bg-good" />
-              <span className="absolute -right-1 -top-1 inline-block size-2 rotate-45 rounded-[1px] bg-s3" />
-            </span>
-            이동형 검침기(휴대)
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block w-4 border-t-2 border-dashed border-s1" /> 지하 공동구
-          </span>
-          <span className="text-muted">
-            {mode === '3d' ? '드래그 회전 · 휠 줌 · 건물 클릭 → 상세' : '건물 클릭 → 상세 보기'}
-          </span>
+        {/* 레이어 범례 — 좌하단 미니멀 토글 패널 (펼치면 항목별 표시/숨김) */}
+        <div
+          className="absolute bottom-3 left-3 z-10"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {legendOpen ? (
+            <div className="w-56 rounded-[10px] border border-hairline bg-surface-1/92 p-2 backdrop-blur-sm">
+              <div className="flex items-center justify-between px-1 pb-1">
+                <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted">
+                  <Layers size={11} /> 레이어
+                </span>
+                <button
+                  onClick={() => setLegendOpen(false)}
+                  className="flex size-5 cursor-pointer items-center justify-center rounded-md text-muted transition-colors hover:bg-surface-2 hover:text-ink"
+                  aria-label="범례 접기"
+                >
+                  <X size={11} />
+                </button>
+              </div>
+              <ul className="flex flex-col gap-0.5">
+                {LAYER_ROWS.map((row) => (
+                  <li key={row.key}>
+                    <button
+                      onClick={() => setLayersOn((prev) => ({ ...prev, [row.key]: !prev[row.key] }))}
+                      className={`flex w-full cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-[11px] transition-colors hover:bg-surface-2 ${
+                        layersOn[row.key] ? 'text-ink-2' : 'text-muted opacity-45'
+                      }`}
+                      title={layersOn[row.key] ? '클릭하여 숨기기' : '클릭하여 표시'}
+                    >
+                      <span className="flex w-5 shrink-0 items-center justify-center">
+                        <LayerIcon k={row.key} is3d={mode === '3d'} />
+                      </span>
+                      <span className="truncate">{row.label}</span>
+                      <span className="ml-auto text-[9px] font-semibold tracking-wide">
+                        {layersOn[row.key] ? 'ON' : 'OFF'}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-1 border-t border-hairline px-1 pt-1.5 text-[10px] leading-relaxed text-muted">
+                {mode === '3d' ? '드래그 회전 · 휠 줌 · 건물 클릭 → 상세' : '건물 클릭 → 상세 보기'}
+              </p>
+            </div>
+          ) : (
+            <button
+              onClick={() => setLegendOpen(true)}
+              className="flex size-9 cursor-pointer items-center justify-center rounded-[10px] border border-hairline bg-surface-1/85 text-ink-2 backdrop-blur-sm transition-colors hover:bg-surface-2 hover:text-ink"
+              aria-label="레이어 범례 펼치기"
+              title="레이어 범례"
+            >
+              <Layers size={16} />
+            </button>
+          )}
         </div>
 
         <div className="absolute bottom-3 right-3 flex items-center gap-2 text-[10px] text-muted">

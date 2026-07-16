@@ -83,6 +83,24 @@ export const utilityTunnels: TunnelSegment[] = [
   { id: 'UT-E', name: '공동구 E라인 · 약품투입동—소화조동', level: 'B2', path: [[660, 352], [830, 352], [830, 292]] },
 ]
 
+/* ── 계단실 — 건물별 상하 이동 코어. 한 건물에 여러 개소 가능하며,
+ * 계단이 설치된 일부 건물에만 존재한다. toLevel은 연결되는 최하층. ── */
+export interface Stairwell {
+  id: string
+  zone: string
+  x: number
+  y: number
+  toLevel: FloorId
+}
+
+export const stairwells: Stairwell[] = [
+  { id: 'ST-01', zone: '하수유입동', x: 142, y: 296, toLevel: 'B2' },
+  { id: 'ST-02', zone: '하수유입동', x: 232, y: 236, toLevel: 'B2' },
+  { id: 'ST-03', zone: '축산전처리동', x: 298, y: 392, toLevel: 'B1' },
+  { id: 'ST-04', zone: '전기실', x: 752, y: 446, toLevel: 'B1' },
+  { id: 'ST-05', zone: '실험동', x: 538, y: 478, toLevel: 'B1' },
+]
+
 /** 공동구 출입구(수직구·계단실) — level은 수직구가 닿는 공동구 층 */
 export const tunnelEntrances: MapPoint[] = [
   { id: 'ENT-01', x: 280, y: 300, zone: '하수유입동', level: 'B1' },

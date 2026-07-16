@@ -8,6 +8,7 @@ import {
   gateways,
   liveWorkers,
   mapBeacons,
+  stairwells,
   tunnelEntrances,
   utilityTunnels,
   workerFloor,
@@ -25,6 +26,9 @@ import {
 
 const FLOOR_H = 25 // 층고 (시각화용 과장 스케일)
 const LEVEL_Y: Record<FloorId, number> = { F1: 0, B1: -FLOOR_H, B2: -FLOOR_H * 2 }
+
+/** 범례 패널에서 토글하는 표시 레이어 */
+export type LayerKey = 'workers' | 'beacons' | 'gateways' | 'gas' | 'tunnels' | 'stairs'
 
 const ZONE_RISK_3D = new Map(assessZoneRisks().map((r) => [r.zone, r.level]))
 
@@ -69,19 +73,32 @@ function textSprite(text: string, color: string, scale = 0.2): THREE.Sprite {
 export default function Site3D({
   focusZone,
   onZoneOpen,
+  layers,
 }: {
   /** 단일 건물 포커스(상세 모달) — 해당 구역과 주변 요소만 렌더링 */
   focusZone?: string
   /** 건물 클릭 시 상세 열기 (메인 3D 뷰 전용) */
   onZoneOpen?: (name: string) => void
+  /** 레이어 표시 여부 — 생략 시 전부 표시 */
+  layers?: Record<LayerKey, boolean>
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const openRef = useRef(onZoneOpen)
   openRef.current = onZoneOpen
+  const layerObjsRef = useRef<Record<LayerKey, THREE.Object3D[]> | null>(null)
 
   useEffect(() => {
     const host = hostRef.current
     if (!host) return
+
+    const layerObjs: Record<LayerKey, THREE.Object3D[]> = {
+      workers: [],
+      beacons: [],
+      gateways: [],
+      gas: [],
+      tunnels: [],
+      stairs: [],
+    }
 
     /* 포커스 건물 bbox — 주변 여백 내 요소만 표시 */
     const focus = focusZone ? zones.find((z) => z.name === focusZone) : undefined
@@ -150,8 +167,10 @@ export default function Site3D({
       ),
     )
 
-    /* ── 건물 — 층 구분 없는 단일 볼륨 (지하 보유 시 지표 아래로 연장) ── */
+    /* ── 건물 — 단일 볼륨 + 내부 층 바닥판 + 층간 계단 ── */
     const zoneMeshes: THREE.Mesh[] = []
+    const stairMat = new THREE.MeshStandardMaterial({ color: '#94a3b8', transparent: true, opacity: 0.95 })
+    const stairTreadGeo = new THREE.BoxGeometry(34 / 6, 1.6, 13)
     for (const z of focus ? [focus] : zones) {
       const pts = parsePts(z.points)
       const xs = pts.map((p) => p[0])
@@ -196,18 +215,95 @@ export default function Site3D({
         tag.position.set(cx, top + 25, cz)
         scene.add(tag)
       }
+
+      /* 내부 층 구분 — 단일 볼륨 안에 각 층의 바닥판을 얇게 표시 */
+      const lvls = [...z.floors].sort((a, b) => LEVEL_Y[a] - LEVEL_Y[b]) // 낮은 층부터
+      for (const lv of lvls.slice(1)) {
+        const plateGeo = new THREE.PlaneGeometry(w - 3, d - 3)
+        const plate = new THREE.Mesh(
+          plateGeo,
+          new THREE.MeshBasicMaterial({
+            color,
+            transparent: true,
+            opacity: 0.09,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+          }),
+        )
+        plate.rotation.x = -Math.PI / 2
+        plate.position.set(cx, LEVEL_Y[lv], cz)
+        scene.add(plate)
+        const pEdge = new THREE.LineSegments(
+          new THREE.EdgesGeometry(plateGeo),
+          new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.35 }),
+        )
+        pEdge.rotation.x = -Math.PI / 2
+        pEdge.position.copy(plate.position)
+        scene.add(pEdge)
+      }
+
     }
 
-    /* ── 지하 공동구 — 층 깊이의 단순 라인 (복잡한 볼륨 대신 경로만) ── */
-    const tunnelMat = new THREE.LineBasicMaterial({ color: col.tunnel, transparent: true, opacity: 0.9 })
+    /* ── 계단실 — 설치된 건물에만(복수 개소 가능).
+     * 최하층 바닥에서 지상까지 층마다 지그재그 플라이트 ── */
+    for (const s of stairwells) {
+      if (focus && s.zone !== focus.name) continue
+      const flights: number[] = []
+      for (let yA = LEVEL_Y[s.toLevel]; yA < 0; yA += FLOOR_H) flights.push(yA)
+      const sx0 = s.x - 17
+      const sz0 = s.y - 7
+      flights.forEach((yA, fi) => {
+        for (let i = 0; i < 6; i++) {
+          const tread = new THREE.Mesh(stairTreadGeo, stairMat)
+          const prog = (i + 0.5) / 6
+          tread.position.set(
+            fi % 2 === 0 ? sx0 + 34 * prog : sx0 + 34 * (1 - prog),
+            yA + FLOOR_H * ((i + 1) / 6),
+            sz0 + (fi % 2) * 14,
+          )
+          scene.add(tread)
+          layerObjs.stairs.push(tread)
+        }
+      })
+    }
+
+    /* ── 지하 공동구 — 사람이 지나는 통로 느낌: 바닥 슬래브 + 낮은 양측 벽.
+     * 바닥은 배경색과 블렌딩한 불투명 색 — 교차부에서 색이 겹쳐 진해지지 않는다.
+     * (코플래너 z-파이팅 방지를 위해 세그먼트마다 미세한 높이 오프셋) ── */
+    const tunFloorMat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(col.page).lerp(new THREE.Color(col.tunnel), 0.38),
+      roughness: 0.7,
+    })
+    const tunWallMat = new THREE.MeshStandardMaterial({
+      color: col.tunnel,
+      transparent: true,
+      opacity: 0.13,
+      roughness: 0.7,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    })
     const shaftMat = new THREE.LineBasicMaterial({ color: col.tunnel, transparent: true, opacity: 0.55 })
+    let segIdx = 0
     for (const t of utilityTunnels) {
-      if (focus && !t.path.some(([x, z]) => inBox(x, z))) continue
-      const y = LEVEL_Y[t.level] + 6
-      const geo = new THREE.BufferGeometry().setFromPoints(
-        t.path.map(([x, z]) => new THREE.Vector3(x, y, z)),
-      )
-      scene.add(new THREE.Line(geo, tunnelMat))
+      const yBase = LEVEL_Y[t.level] + 1
+      for (let i = 0; i < t.path.length - 1; i++) {
+        const [x0, z0] = t.path[i]
+        const [x1, z1] = t.path[i + 1]
+        if (focus && !inBox(x0, z0) && !inBox(x1, z1)) continue
+        const len = Math.hypot(x1 - x0, z1 - z0)
+        const seg = new THREE.Group()
+        seg.position.set((x0 + x1) / 2, yBase + (segIdx++ % 7) * 0.03, (z0 + z1) / 2)
+        seg.rotation.y = -Math.atan2(z1 - z0, x1 - x0)
+        const floor = new THREE.Mesh(new THREE.BoxGeometry(len + 4, 1.2, 18), tunFloorMat)
+        seg.add(floor)
+        for (const side of [-8.7, 8.7]) {
+          const wall = new THREE.Mesh(new THREE.BoxGeometry(len + 4, 9, 1), tunWallMat)
+          wall.position.set(0, 5, side)
+          seg.add(wall)
+        }
+        scene.add(seg)
+        layerObjs.tunnels.push(seg)
+      }
     }
     /* 출입구 — 지표에서 공동구 층까지 수직 라인 */
     for (const e of tunnelEntrances) {
@@ -216,43 +312,74 @@ export default function Site3D({
         new THREE.Vector3(e.x, 0, e.y),
         new THREE.Vector3(e.x, LEVEL_Y[e.level ?? 'B1'] + 6, e.y),
       ])
-      scene.add(new THREE.Line(geo, shaftMat))
+      const shaft = new THREE.Line(geo, shaftMat)
+      scene.add(shaft)
+      layerObjs.tunnels.push(shaft)
     }
 
-    /* ── 장비 마커 ── */
-    const beaconGeo = new THREE.BoxGeometry(6, 6, 6)
+    /* ── 장비 마커 — 실제 기기 형태의 소형 모델 ── */
+    /* 비콘: 벽부착형 원형 퍽 + 반투명 돔 */
+    const beaconPuckGeo = new THREE.CylinderGeometry(2.3, 2.7, 1.1, 14)
+    const beaconDomeGeo = new THREE.SphereGeometry(1.6, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2)
+    const beaconPuckMat = new THREE.MeshStandardMaterial({ color: col.beacon, roughness: 0.5 })
+    const beaconDomeMat = new THREE.MeshStandardMaterial({
+      color: '#c4b5fd',
+      roughness: 0.3,
+      transparent: true,
+      opacity: 0.85,
+    })
     for (const b of mapBeacons) {
       if (focus && !inBox(b.x, b.y)) continue
-      const m = new THREE.Mesh(
-        beaconGeo,
-        new THREE.MeshStandardMaterial({ color: col.beacon, transparent: true, opacity: 0.95 }),
-      )
-      m.position.set(b.x, LEVEL_Y[b.level ?? 'F1'] + 4, b.y)
-      scene.add(m)
+      const grp = new THREE.Group()
+      const puck = new THREE.Mesh(beaconPuckGeo, beaconPuckMat)
+      const dome = new THREE.Mesh(beaconDomeGeo, beaconDomeMat)
+      dome.position.y = 0.55
+      grp.add(puck, dome)
+      grp.position.set(b.x, LEVEL_Y[b.level ?? 'F1'] + 1.4, b.y)
+      scene.add(grp)
+      layerObjs.beacons.push(grp)
     }
-    const gwGeo = new THREE.SphereGeometry(6, 20, 14)
+    /* 게이트웨이: 함체 + 안테나 2본 */
+    const gwBodyGeo = new THREE.BoxGeometry(4.2, 5, 2.2)
+    const gwAntGeo = new THREE.CylinderGeometry(0.3, 0.3, 5.5, 6)
+    const gwTipGeo = new THREE.SphereGeometry(0.55, 8, 6)
+    const gwBodyMat = new THREE.MeshStandardMaterial({ color: col.gateway, roughness: 0.55 })
+    const gwAntMat = new THREE.MeshStandardMaterial({ color: '#cbd5e1', roughness: 0.4 })
     for (const g of gateways) {
       if (focus && !inBox(g.x, g.y)) continue
-      const m = new THREE.Mesh(
-        gwGeo,
-        new THREE.MeshStandardMaterial({ color: col.gateway, transparent: true, opacity: 0.95 }),
-      )
-      m.position.set(g.x, 7, g.y)
-      scene.add(m)
+      const grp = new THREE.Group()
+      const body = new THREE.Mesh(gwBodyGeo, gwBodyMat)
+      body.position.y = 2.5
+      grp.add(body)
+      for (const ax of [-1.2, 1.2]) {
+        const ant = new THREE.Mesh(gwAntGeo, gwAntMat)
+        ant.position.set(ax, 7.5, 0)
+        const tip = new THREE.Mesh(gwTipGeo, gwAntMat)
+        tip.position.set(ax, 10.3, 0)
+        grp.add(ant, tip)
+      }
+      grp.position.set(g.x, 0, g.y)
+      scene.add(grp)
+      layerObjs.gateways.push(grp)
     }
-    const gasGeo = new THREE.OctahedronGeometry(7)
+    /* 고정형 가스검침기: 함체 + 하부 센서 헤드 (판정 등급 색) */
+    const gasBodyGeo = new THREE.BoxGeometry(3.4, 4.4, 2)
+    const gasHeadGeo = new THREE.CylinderGeometry(1, 1.2, 1.5, 10)
+    const gasHeadMat = new THREE.MeshStandardMaterial({ color: '#475569', roughness: 0.6 })
     for (const g of gasDetectors) {
       if (focus && !inBox(g.x, g.y)) continue
-      const m = new THREE.Mesh(
-        gasGeo,
-        new THREE.MeshStandardMaterial({
-          color: col.gas[gasSeverity(g)],
-          transparent: true,
-          opacity: 0.95,
-        }),
+      const grp = new THREE.Group()
+      const body = new THREE.Mesh(
+        gasBodyGeo,
+        new THREE.MeshStandardMaterial({ color: col.gas[gasSeverity(g)], roughness: 0.5 }),
       )
-      m.position.set(g.x, 8, g.y)
-      scene.add(m)
+      body.position.y = 3.4
+      const head = new THREE.Mesh(gasHeadGeo, gasHeadMat)
+      head.position.y = 0.8
+      grp.add(body, head)
+      grp.position.set(g.x, 0, g.y)
+      scene.add(grp)
+      layerObjs.gas.push(grp)
     }
 
     /* ── 작업자 — 실시간 이동 + 이름 라벨 (+위험 링) ── */
@@ -262,7 +389,7 @@ export default function Site3D({
       w: (typeof liveWorkers)[number]
       ring: THREE.Mesh | null
     }> = []
-    const sphereGeo = new THREE.SphereGeometry(6.5, 20, 14)
+    const sphereGeo = new THREE.SphereGeometry(4.6, 20, 14)
     for (const w of liveWorkers) {
       if (w.outTime !== null) continue
       if (focus && w.zone !== focus.name) continue
@@ -280,7 +407,7 @@ export default function Site3D({
       let ring: THREE.Mesh | null = null
       if (w.danger) {
         ring = new THREE.Mesh(
-          new THREE.RingGeometry(9, 11, 36),
+          new THREE.RingGeometry(6.5, 8.2, 36),
           new THREE.MeshBasicMaterial({
             color: col.critical,
             transparent: true,
@@ -293,14 +420,17 @@ export default function Site3D({
         ring.position.y = -4
         g.add(ring)
       }
-      const lbl = textSprite(w.name, col.label, 0.17)
-      lbl.position.y = 14
+      const lbl = textSprite(w.name, col.label, 0.15)
+      lbl.position.y = 11
       g.add(lbl)
       const [x, z] = workerPosition(w, 0)
-      g.position.set(x, LEVEL_Y[wf] + 7, z)
+      g.position.set(x, LEVEL_Y[wf] + 5, z)
       scene.add(g)
       workerObjs.push({ g, w, ring })
+      layerObjs.workers.push(g)
     }
+
+    layerObjsRef.current = layerObjs
 
     /* ── 건물 클릭 → 상세 모달 (드래그 회전과 구분: 이동량이 작을 때만) ── */
     const ray = new THREE.Raycaster()
@@ -383,9 +513,20 @@ export default function Site3D({
       })
       renderer.dispose()
       host.removeChild(renderer.domElement)
+      layerObjsRef.current = null
     }
     // 테마 전환 시에는 지도 재진입으로 색을 다시 읽는다 — 목업 수준에서 허용
   }, [focusZone])
+
+  /* 레이어 표시 토글 — 씬 재구축 없이 visible만 갱신 */
+  useEffect(() => {
+    const lo = layerObjsRef.current
+    if (!lo) return
+    for (const k of Object.keys(lo) as LayerKey[]) {
+      const on = layers?.[k] ?? true
+      for (const o of lo[k]) o.visible = on
+    }
+  }, [layers, focusZone])
 
   return <div ref={hostRef} className="absolute inset-0" />
 }
