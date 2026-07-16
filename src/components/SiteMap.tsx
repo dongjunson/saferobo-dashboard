@@ -12,12 +12,15 @@ import {
   X,
 } from 'lucide-react'
 import type { LayerKey } from './Site3D'
+import Sparkline from './Sparkline'
+import { InOutBadge } from './ui'
 import {
   assessZoneRisks,
   entryLogs,
   floorDefs,
   gasDetectors,
   gasMetrics,
+  genGasHistory,
   gasSeverity,
   gateways,
   liveWorkers,
@@ -31,7 +34,9 @@ import {
   workerPosition,
   zones,
   type FloorId,
+  type GasDetector,
   type GasLevel,
+  type GasMetricKey,
   type LiveWorker,
   type Zone,
 } from '../data/site'
@@ -359,6 +364,11 @@ const StaticLayers = memo(function StaticLayers({
   const km = Math.min(k, 2.5) // 장비 마커는 광역 줌아웃에서 과대해지지 않도록 별도 상한
   const showDevices = k <= 4 // 광역 뷰에서는 장비 마커 숨김 (현장 식별 위주)
   const dash = floor !== 'F1' ? '5 4' : undefined // 지하 평면도는 점선 톤
+  /* 마커 클릭 → 소속 건물 상세 열기 (건물 위 마커가 클릭을 가리지 않도록) */
+  const openZone = (e: React.MouseEvent, name: string) => {
+    e.stopPropagation()
+    if (zones.some((z) => z.name === name)) onZoneOpen(name)
+  }
   return (
     <>
       {showGrid &&
@@ -488,7 +498,12 @@ const StaticLayers = memo(function StaticLayers({
         </g>
       ))}
       {show.beacons && showDevices && layers.bs.map((b) => (
-        <g key={b.id} transform={`translate(${b.x}, ${b.y}) scale(${km})`}>
+        <g
+          key={b.id}
+          transform={`translate(${b.x}, ${b.y}) scale(${km})`}
+          style={{ cursor: 'pointer' }}
+          onClick={(e) => openZone(e, b.zone)}
+        >
           <rect x="-4.5" y="-4.5" width="9" height="9" rx="2" fill="var(--series-4)" opacity="0.9">
             <title>{`${b.id} · ${b.zone}`}</title>
           </rect>
@@ -496,7 +511,12 @@ const StaticLayers = memo(function StaticLayers({
         </g>
       ))}
       {show.gateways && showDevices && layers.gs.map((g) => (
-        <g key={g.id} transform={`translate(${g.x}, ${g.y}) scale(${km})`}>
+        <g
+          key={g.id}
+          transform={`translate(${g.x}, ${g.y}) scale(${km})`}
+          style={{ cursor: 'pointer' }}
+          onClick={(e) => openZone(e, g.zone)}
+        >
           <circle r="10" fill="var(--series-1)" opacity="0.95">
             <title>{`${g.id} · ${g.zone}`}</title>
           </circle>
@@ -506,7 +526,12 @@ const StaticLayers = memo(function StaticLayers({
       ))}
       {/* 고정형 가스검침기 — 마름모 마커, 판정 등급 색상 */}
       {show.gas && showDevices && layers.gds.map((g) => (
-        <g key={g.id} transform={`translate(${g.x}, ${g.y}) scale(${km})`}>
+        <g
+          key={g.id}
+          transform={`translate(${g.x}, ${g.y}) scale(${km})`}
+          style={{ cursor: 'pointer' }}
+          onClick={(e) => openZone(e, g.zone)}
+        >
           {g.lvl === 'critical' && (
             <circle r="12" fill="none" stroke={GAS_COLOR[g.lvl]} strokeWidth="2" opacity="0.7">
               <animate attributeName="r" values="7;16" dur="1.2s" repeatCount="indefinite" />
@@ -535,7 +560,12 @@ const StaticLayers = memo(function StaticLayers({
       ))}
       {/* 공동구 출입구(수직구·계단실) */}
       {show.tunnels && showDevices && tunnelEntrances.map((e) => (
-        <g key={e.id} transform={`translate(${e.x}, ${e.y}) scale(${km})`}>
+        <g
+          key={e.id}
+          transform={`translate(${e.x}, ${e.y}) scale(${km})`}
+          style={{ cursor: 'pointer' }}
+          onClick={(ev) => openZone(ev, e.zone)}
+        >
           <rect x="-4" y="-4" width="8" height="8" rx="1.5" fill="var(--surface-1)" stroke="var(--series-1)" strokeWidth="1.4">
             <title>{`${e.id} · ${e.zone} 공동구 출입구 (${FLOOR_SHORT[e.level ?? 'B1']} 연결)`}</title>
           </rect>
@@ -557,6 +587,7 @@ const StaticLayers = memo(function StaticLayers({
           x={s.x}
           y={s.y}
           title={`${s.id} 계단실 · ${s.zone} (${FLOOR_SHORT[s.toLevel]}~지상 연결)`}
+          onClick={(e) => openZone(e, s.zone)}
         />
       ))}
     </>
@@ -564,9 +595,24 @@ const StaticLayers = memo(function StaticLayers({
 })
 
 /* ── 계단실 심볼 — 러그(디딤판) + 상하 화살표 ─────────────────────── */
-function StairSymbol({ x, y, title }: { x: number; y: number; title: string }) {
+function StairSymbol({
+  x,
+  y,
+  title,
+  onClick,
+}: {
+  x: number
+  y: number
+  title: string
+  onClick?: (e: React.MouseEvent) => void
+}) {
   return (
-    <g transform={`translate(${x}, ${y})`} opacity="0.95">
+    <g
+      transform={`translate(${x}, ${y})`}
+      opacity="0.95"
+      style={onClick ? { cursor: 'pointer' } : undefined}
+      onClick={onClick}
+    >
       <title>{title}</title>
       <rect
         x="-14"
@@ -722,6 +768,54 @@ function WorkerLayer({
   )
 }
 
+/* ── 건물 상세: 고정형 가스검침기 차트 — 항목별 스파크라인 + 현재값 (1초 갱신) ── */
+function ZoneGasChart({ det }: { det: GasDetector }) {
+  const [hists, setHists] = useState<Record<GasMetricKey, number[]>>(
+    () =>
+      Object.fromEntries(
+        gasMetrics.map((m) => [m.key, genGasHistory(det[m.key], m.jitter)]),
+      ) as Record<GasMetricKey, number[]>,
+  )
+  useEffect(() => {
+    const t = setInterval(() => {
+      setHists(
+        (prev) =>
+          Object.fromEntries(
+            gasMetrics.map((m) => [
+              m.key,
+              [...prev[m.key].slice(1), Math.max(0, det[m.key] + (Math.random() - 0.5) * m.jitter)],
+            ]),
+          ) as Record<GasMetricKey, number[]>,
+      )
+    }, 1000)
+    return () => clearInterval(t)
+  }, [det])
+  return (
+    <div className="mt-1.5 rounded-[10px] bg-page/60 p-2.5">
+      <p className="font-mono text-[11px] text-ink">{det.id}</p>
+      <div className="mt-1.5 flex flex-col gap-1">
+        {gasMetrics.map((m) => {
+          const data = hists[m.key]
+          const v = data[data.length - 1]
+          return (
+            <div key={m.key} className="flex items-center gap-2 rounded-[8px] bg-surface-1/70 px-2 py-1">
+              <span className="w-8 shrink-0 text-[10px] text-muted">{m.label}</span>
+              <Sparkline data={data} color={m.color} height={16} min={m.min} max={m.max} />
+              <span
+                className="w-14 shrink-0 text-right text-[12px] font-bold leading-none"
+                style={{ color: m.color, fontVariantNumeric: 'tabular-nums' }}
+              >
+                {v.toFixed(1)}
+                <span className="ml-0.5 text-[9px] font-normal text-muted">{m.unit}</span>
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 /* ── 건물 상세 모달 — 구역 클릭 시 3D 단일 건물 뷰(기본) + 2D 층별 평면도 ──
  * 좌: three.js 3D(회전·줌·팬, 전체 층) 또는 층 탭 + 확대 평면도(실시간 위치)
  * 우: 위험도 판정 근거 · 재실 작업자 · 고정형 검침기 · 설비 요약 */
@@ -777,7 +871,7 @@ function ZoneDetailModal({
       onClick={onClose}
     >
       <div
-        className="flex h-[min(82vh,780px)] w-full max-w-5xl flex-col overflow-hidden rounded-[14px] border border-hairline bg-surface-1"
+        className="flex h-[min(82vh,780px)] w-full max-w-6xl flex-col overflow-hidden rounded-[14px] border border-hairline bg-surface-1"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex shrink-0 items-center gap-3 border-b border-hairline px-5 py-3.5">
@@ -1013,7 +1107,7 @@ function ZoneDetailModal({
           </div>
 
           {/* 우: 현황 정보 */}
-          <div className="w-80 shrink-0 overflow-y-auto border-l border-hairline p-4">
+          <div className="scrollbar-mini w-96 shrink-0 overflow-y-auto border-l border-hairline p-4">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-muted">위험도 판정</p>
             <p className="mt-1.5 text-[13px] leading-relaxed text-ink-2">
               {risk?.cause ? (
@@ -1034,18 +1128,55 @@ function ZoneDetailModal({
             <ul className="mt-1.5 flex flex-col divide-y divide-hairline">
               {zoneWorkers.map((w) => {
                 const pgas = PORTABLE_BY_WORKER.get(w.id)
+                /* 워치 센서 라이브 — tick 기반 심박 흔들림 (모달은 1초 리렌더) */
+                const hr = Math.max(60, Math.round(w.heartRate + Math.sin(tick * 1.7 + w.id * 3) * 3))
+                const pgLvl = pgas ? gasSeverity(pgas) : null
                 return (
-                  <li key={w.id} className="flex items-center gap-2 py-1.5 text-[13px]">
-                    <span className={`size-2 shrink-0 rounded-full ${w.danger ? 'animate-pulse bg-critical' : 'bg-good'}`} />
-                    <span className="font-medium text-ink">{w.name}</span>
-                    <span className="text-[11px] text-muted">{w.space}</span>
-                    <span className={`ml-auto font-mono text-xs ${w.danger ? 'font-semibold text-critical' : 'text-ink-2'}`}>
-                      {w.heartRate}bpm
-                    </span>
-                    {pgas && (
-                      <span className="rounded-md bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] text-ink-2" title="이동형 가스검침기 휴대">
-                        {pgas.id}
+                  <li key={w.id} className="py-2">
+                    <div className="flex items-center gap-2 text-[13px]">
+                      <span className={`size-2 shrink-0 rounded-full ${w.danger ? 'animate-pulse bg-critical' : 'bg-good'}`} />
+                      <span className="truncate font-medium text-ink">{w.name}</span>
+                      <span className="shrink-0 text-[11px] text-muted">{w.space}</span>
+                      {/* 워치 센서 — 심박 · 피부온도 */}
+                      <span
+                        className={`ml-auto shrink-0 font-mono text-[11px] ${w.danger ? 'font-semibold text-critical' : 'text-ink-2'}`}
+                        title="워치 심박수"
+                      >
+                        ♥ {hr}bpm
                       </span>
+                      <span className="shrink-0 font-mono text-[11px] text-ink-2" title="워치 피부온도">
+                        {w.skinTemp.toFixed(1)}℃
+                      </span>
+                    </div>
+                    {/* 휴대 중인 이동형 가스검침기 측정값 — 5칸 그리드로 줄바꿈 없이 */}
+                    {pgas && pgLvl && (
+                      <div className="mt-1.5 rounded-[8px] bg-page/60 px-2 py-1.5">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-[10px] text-ink">{pgas.id}</span>
+                          <span
+                            className={`inline-flex rounded-full border px-1.5 py-px text-[9px] font-semibold ${RISK_CHIP[pgLvl].cls}`}
+                          >
+                            {RISK_CHIP[pgLvl].label}
+                          </span>
+                          <span className="ml-auto text-[9px] text-muted">이동형 가스검침기</span>
+                        </div>
+                        <div className="mt-1 grid grid-cols-5 gap-1">
+                          {gasMetrics.map((m) => (
+                            <div key={m.key} className="rounded-md bg-surface-1/70 py-1 text-center">
+                              <p className="text-[9px] leading-tight text-muted">
+                                {m.label}
+                                <span className="ml-px opacity-80">({m.unit})</span>
+                              </p>
+                              <p
+                                className="mt-0.5 font-mono text-[11px] font-semibold leading-none"
+                                style={{ color: m.color, fontVariantNumeric: 'tabular-nums' }}
+                              >
+                                {pgas[m.key]}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
                     )}
                   </li>
                 )
@@ -1081,9 +1212,8 @@ function ZoneDetailModal({
                       <li key={i} className="flex items-center gap-2 py-1.5 text-[12px]">
                         <span className="truncate font-medium text-ink">{s.worker}</span>
                         <span className="truncate text-[10px] text-muted">{s.vendor}</span>
-                        <span className="ml-auto shrink-0 font-mono text-[11px] text-ink-2">
-                          {s.in} <span className="text-muted">→</span>{' '}
-                          {s.out ?? <span className="font-sans text-[10px] font-semibold text-good">재실</span>}
+                        <span className="ml-auto shrink-0">
+                          <InOutBadge inTime={s.in} outTime={s.out} />
                         </span>
                       </li>
                     ))}
@@ -1099,20 +1229,7 @@ function ZoneDetailModal({
               고정형 가스검침기 ({zoneDets.length})
             </p>
             {zoneDets.map((d) => (
-              <div key={d.id} className="mt-1.5 rounded-[10px] bg-page/60 p-2.5">
-                <p className="font-mono text-[11px] text-ink">{d.id}</p>
-                <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1">
-                  {gasMetrics.map((m) => (
-                    <span key={m.key} className="text-[11px] text-muted">
-                      {m.label}{' '}
-                      <span className="font-mono font-semibold" style={{ color: m.color }}>
-                        {d[m.key]}
-                      </span>
-                      <span className="ml-0.5 text-[9px]">{m.unit}</span>
-                    </span>
-                  ))}
-                </div>
-              </div>
+              <ZoneGasChart key={d.id} det={d} />
             ))}
             {zoneDets.length === 0 && <p className="mt-1.5 text-xs text-muted">설치된 고정형 검침기가 없습니다.</p>}
 

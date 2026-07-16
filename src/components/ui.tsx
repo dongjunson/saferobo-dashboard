@@ -120,6 +120,26 @@ export function SeverityBadge({ severity }: { severity: Severity }) {
   )
 }
 
+/* 입·퇴실 그룹 배지 — [입실시간 | 퇴실시간 or 재실] 공용 디자인 */
+export function InOutBadge({ inTime, outTime }: { inTime: string; outTime: string | null }) {
+  return (
+    <span className="inline-flex overflow-hidden rounded-full border border-hairline text-[10px] leading-none">
+      <span className="bg-surface-2 px-1.5 py-1 font-mono text-ink-2" title="입실">
+        {inTime}
+      </span>
+      {outTime ? (
+        <span className="px-1.5 py-1 font-mono text-muted" title="퇴실">
+          {outTime}
+        </span>
+      ) : (
+        <span className="bg-good/10 px-1.5 py-1 font-semibold text-good" title="재실 중">
+          재실
+        </span>
+      )}
+    </span>
+  )
+}
+
 /** Recharts용 커스텀 툴팁 — 서페이스 위 헤어라인 카드, 시리즈 점 + 텍스트 잉크 */
 export function ChartTooltip({
   active,

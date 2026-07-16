@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { ChevronDown, ChevronLeft, ChevronRight, ClipboardList, Maximize2, Minimize2, RotateCw } from 'lucide-react'
 import SiteMap from '../components/SiteMap'
 import Sparkline from '../components/Sparkline'
-import { Card, SeverityBadge } from '../components/ui'
+import { Card, InOutBadge, SeverityBadge } from '../components/ui'
 import {
   assessZoneRisks,
   beaconRows,
@@ -444,22 +444,9 @@ function WorkerTable() {
                 <span className="text-muted">-</span>
               )}
             </td>
-            {/* 입·퇴실 — 한 그룹 배지: [입실시간 | 퇴실시간·재실] */}
+            {/* 입·퇴실 — 공용 그룹 배지: [입실시간 | 퇴실시간·재실] */}
             <td className={`${tdc} truncate`}>
-              <span className="inline-flex overflow-hidden rounded-full border border-hairline text-[10px] leading-none">
-                <span className="bg-surface-2 px-1.5 py-1 font-mono text-ink-2" title="입실">
-                  {w.inTime}
-                </span>
-                {w.outTime ? (
-                  <span className="px-1.5 py-1 font-mono text-muted" title="퇴실">
-                    {w.outTime}
-                  </span>
-                ) : (
-                  <span className="bg-good/10 px-1.5 py-1 font-semibold text-good" title="재실 중">
-                    재실
-                  </span>
-                )}
-              </span>
+              <InOutBadge inTime={w.inTime} outTime={w.outTime} />
             </td>
             <td className={`${tdc} font-mono`}>{w.outTime ? '-' : heartbeats[w.id] ?? w.heartRate}</td>
             <td className={`${tdc} font-mono`}>{w.outTime ? '-' : w.skinTemp.toFixed(1)}</td>
