@@ -8,10 +8,11 @@ import {
   Minimize2,
   Minus,
   Plus,
+  RotateCw,
   Wifi,
   X,
 } from 'lucide-react'
-import type { LayerKey } from './Site3D'
+import type { CameraPreset, LayerKey } from './Site3D'
 import Sparkline from './Sparkline'
 import { InOutBadge } from './ui'
 import {
@@ -1333,6 +1334,8 @@ export default function SiteMap() {
   const [detailZone, setDetailZone] = useState<string | null>(null)
   const [legendOpen, setLegendOpen] = useState(false)
   const [layersOn, setLayersOn] = useState<Record<LayerKey, boolean>>(ALL_LAYERS_ON)
+  const [preset3d, setPreset3d] = useState<CameraPreset>({ kind: 'default', n: 0 })
+  const [rotate3d, setRotate3d] = useState(false)
 
   const wrapRef = useRef<HTMLDivElement>(null)
   const vbRef = useRef(vb)
@@ -1438,6 +1441,30 @@ export default function SiteMap() {
               </button>
             ))}
           </div>
+          {mode === '3d' && (
+            /* 3D 보기 프리셋 — 기본/위에서/옆에서/꽉차게 */
+            <div className="flex rounded-lg border border-hairline p-0.5">
+              {(
+                [
+                  ['default', '기본'],
+                  ['top', '위에서'],
+                  ['side', '옆에서'],
+                  ['fit', '꽉차게'],
+                ] as const
+              ).map(([k, label]) => (
+                <button
+                  key={k}
+                  onClick={() => setPreset3d({ kind: k, n: Date.now() })}
+                  className={`h-8 cursor-pointer whitespace-nowrap rounded-md px-3.5 text-[13px] font-semibold transition-colors ${
+                    preset3d.kind === k ? 'bg-primary text-white' : 'text-ink-2 hover:bg-surface-2'
+                  }`}
+                  title={`${label} 보기`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
           {mode === '2d' && (
             <>
               {/* 배경 지도 (2D 전용 — 레거시 지도/스카이뷰 대응) */}
@@ -1557,8 +1584,28 @@ export default function SiteMap() {
             }
           >
             {/* 3D는 층 구분 없이 전체 사업소(건물·공동구)를 모두 표시, 건물 클릭 → 상세 */}
-            <Site3D onZoneOpen={setDetailZone} layers={layersOn} />
+            <Site3D onZoneOpen={setDetailZone} layers={layersOn} preset={preset3d} autoRotate={rotate3d} />
           </Suspense>
+        )}
+
+        {/* 3D 자동 회전 토글 — 우측 상단 */}
+        {mode === '3d' && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              setRotate3d((v) => !v)
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+            className={`absolute right-3 top-3 z-10 flex size-9 cursor-pointer items-center justify-center rounded-[10px] border backdrop-blur-sm transition-colors ${
+              rotate3d
+                ? 'border-primary bg-primary text-white'
+                : 'border-hairline bg-surface-1/85 text-ink-2 hover:bg-surface-2 hover:text-ink'
+            }`}
+            aria-label="자동 회전"
+            title={rotate3d ? '자동 회전 끄기' : '자동 회전 켜기'}
+          >
+            <RotateCw size={16} className={rotate3d ? 'animate-spin [animation-duration:3s]' : ''} />
+          </button>
         )}
 
         {/* 줌 컨트롤 (SVG 모드 전용 — 3D는 OrbitControls) */}

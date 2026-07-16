@@ -31,6 +31,12 @@ const LEVEL_Y: Record<FloorId, number> = { F1: 0, B1: -FLOOR_H, B2: -FLOOR_H * 2
 /** 범례 패널에서 토글하는 표시 레이어 */
 export type LayerKey = 'workers' | 'beacons' | 'gateways' | 'gas' | 'tunnels' | 'stairs' | 'rooms'
 
+/** 카메라 보기 프리셋 — n은 같은 프리셋 재클릭도 적용되도록 하는 시퀀스 */
+export interface CameraPreset {
+  kind: 'default' | 'top' | 'side' | 'fit'
+  n: number
+}
+
 const ZONE_RISK_3D = new Map(assessZoneRisks().map((r) => [r.zone, r.level]))
 
 function parsePts(points: string): Array<[number, number]> {
@@ -75,6 +81,8 @@ export default function Site3D({
   focusZone,
   onZoneOpen,
   layers,
+  preset,
+  autoRotate,
 }: {
   /** 단일 건물 포커스(상세 모달) — 해당 구역과 주변 요소만 렌더링 */
   focusZone?: string
@@ -82,11 +90,24 @@ export default function Site3D({
   onZoneOpen?: (name: string) => void
   /** 레이어 표시 여부 — 생략 시 전부 표시 */
   layers?: Record<LayerKey, boolean>
+  /** 카메라 보기 프리셋 (기본/위에서/옆에서/꽉차게) */
+  preset?: CameraPreset
+  /** 자동 회전 */
+  autoRotate?: boolean
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const openRef = useRef(onZoneOpen)
   openRef.current = onZoneOpen
   const layerObjsRef = useRef<Record<LayerKey, THREE.Object3D[]> | null>(null)
+  const camApiRef = useRef<{
+    camera: THREE.PerspectiveCamera
+    controls: OrbitControls
+    tgt: THREE.Vector3
+    homePos: THREE.Vector3
+    sizeW: number
+    sizeD: number
+    fitFor: (w: number, h: number) => number
+  } | null>(null)
 
   useEffect(() => {
     const host = hostRef.current
@@ -160,6 +181,21 @@ export default function Site3D({
     const sun = new THREE.DirectionalLight(0xffffff, 1.6)
     sun.position.set(600, 900, -300)
     scene.add(sun)
+
+    /* 카메라 프리셋 API — 가로·세로 범위가 화면에 꽉 차는 거리 계산 */
+    camApiRef.current = {
+      camera,
+      controls,
+      tgt: tgt.clone(),
+      homePos: camera.position.clone(),
+      sizeW: bx1 - bx0,
+      sizeD: bz1 - bz0,
+      fitFor: (w: number, h: number) => {
+        const vHalf = THREE.MathUtils.degToRad(camera.fov / 2)
+        const hHalf = Math.atan(Math.tan(vHalf) * camera.aspect)
+        return Math.max(h / 2 / Math.tan(vHalf), w / 2 / Math.tan(hHalf)) * 1.08
+      },
+    }
 
     /* ── 지반 그리드 ── */
     const gridGeo = new THREE.BufferGeometry()
@@ -543,9 +579,50 @@ export default function Site3D({
       renderer.dispose()
       host.removeChild(renderer.domElement)
       layerObjsRef.current = null
+      camApiRef.current = null
     }
     // 테마 전환 시에는 지도 재진입으로 색을 다시 읽는다 — 목업 수준에서 허용
   }, [focusZone])
+
+  /* 카메라 보기 프리셋 — 위에서/옆에서/꽉차게/기본 */
+  useEffect(() => {
+    const api = camApiRef.current
+    if (!preset || !api) return
+    const { camera, controls, tgt, homePos, sizeW, sizeD, fitFor } = api
+    switch (preset.kind) {
+      case 'top': {
+        // 위에서 보기 — 부지 footprint가 화면에 꽉 차는 수직 탑뷰
+        const d = fitFor(sizeW, sizeD)
+        camera.position.set(tgt.x, d, tgt.z + 1)
+        break
+      }
+      case 'side': {
+        // 옆에서 보기 — 남측 저각(수평) 뷰, 가로 폭 기준으로 맞춤
+        const d = fitFor(sizeW, 220)
+        camera.position.set(tgt.x, tgt.y + 70, tgt.z + d)
+        break
+      }
+      case 'fit': {
+        // 꽉차게 보기 — 쿼터 각도를 유지하며 투영 범위 기준으로 맞춤
+        const d = fitFor((sizeW + sizeD) * 0.72, (sizeW + sizeD) * 0.42)
+        const k = d / Math.hypot(0.55, 0.5, 0.55)
+        camera.position.set(tgt.x + k * 0.55, tgt.y + k * 0.5, tgt.z + k * 0.55)
+        break
+      }
+      default: // 기본 보기
+        camera.position.copy(homePos)
+    }
+    controls.target.copy(tgt)
+    controls.update()
+  }, [preset, focusZone])
+
+  /* 자동 회전 토글 */
+  useEffect(() => {
+    const api = camApiRef.current
+    if (!api) return
+    api.controls.autoRotate = !!autoRotate
+    api.controls.autoRotateSpeed = 1.1
+  }, [autoRotate, focusZone])
 
   /* 레이어 표시 토글 — 씬 재구축 없이 visible만 갱신 */
   useEffect(() => {

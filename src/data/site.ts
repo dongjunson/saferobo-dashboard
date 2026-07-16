@@ -239,6 +239,11 @@ export const liveWorkers: LiveWorker[] = [
   { id: 6, name: '한지훈', vendor: '서해산업', space: '지하층', zone: '실험동', inTime: '08:02', outTime: null, heartRate: 79, skinTemp: 32.0, danger: false, path: [[465, 480], [545, 525], [505, 500]], speed: 5, offset: 25 },
   { id: 7, name: '임동혁', vendor: '대한중공업', space: '지상층', zone: '전기실', inTime: '07:55', outTime: null, heartRate: 92, skinTemp: 33.4, danger: false, path: [[700, 420], [760, 445], [680, 450]], speed: 6, offset: 35 },
   { id: 8, name: '오세영', vendor: '금강ENG', space: '지상층', zone: '관리동', inTime: '07:19', outTime: '16:40', heartRate: 0, skinTemp: 0, danger: false, path: [[520, 330]], speed: 0, offset: 0 },
+  { id: 9, name: '서동원', vendor: '대한중공업', space: '지상층', zone: '소화조동', inTime: '08:15', outTime: null, heartRate: 84, skinTemp: 32.6, danger: false, path: [[850, 215], [915, 270], [880, 240]], speed: 6, offset: 15 },
+  { id: 10, name: '김도현', vendor: '남도기공', space: '지상층', zone: '약품투입동', inTime: '09:05', outTime: null, heartRate: 77, skinTemp: 32.1, danger: false, path: [[855, 365], [925, 395], [890, 380]], speed: 5, offset: 45 },
+  { id: 11, name: '박준서', vendor: '서해산업', space: '지상층', zone: '슬러지건조동', inTime: '08:50', outTime: null, heartRate: 90, skinTemp: 33.0, danger: false, path: [[620, 500], [705, 540], [660, 520]], speed: 7, offset: 20 },
+  { id: 12, name: '이승우', vendor: '금강ENG', space: '지하층', zone: '하수유입동', inTime: '10:12', outTime: null, heartRate: 82, skinTemp: 32.3, danger: false, path: [[160, 250], [250, 300], [205, 275]], speed: 6, offset: 70 },
+  { id: 13, name: '최민석', vendor: '대한중공업', space: '지상층', zone: '탈수기동', inTime: '10:40', outTime: null, heartRate: 95, skinTemp: 33.2, danger: false, path: [[440, 210], [360, 165], [420, 185]], speed: 7, offset: 50 },
 ]
 
 /** 작업 공간 문자열 → 층 (지도 레이어링용) */
@@ -307,6 +312,11 @@ export const entryLogs: EntryLog[] = [
   { worker: '문성호', vendor: '남도기공', zone: '약품투입동', type: '퇴실', time: '11:15' },
   { worker: '조현우', vendor: '서해산업', zone: '슬러지건조동', type: '입실', time: '08:40' },
   { worker: '조현우', vendor: '서해산업', zone: '슬러지건조동', type: '퇴실', time: '09:30' },
+  { worker: '서동원', vendor: '대한중공업', zone: '소화조동', type: '입실', time: '08:15' },
+  { worker: '김도현', vendor: '남도기공', zone: '약품투입동', type: '입실', time: '09:05' },
+  { worker: '박준서', vendor: '서해산업', zone: '슬러지건조동', type: '입실', time: '08:50' },
+  { worker: '이승우', vendor: '금강ENG', zone: '하수유입동', type: '입실', time: '10:12' },
+  { worker: '최민석', vendor: '대한중공업', zone: '탈수기동', type: '입실', time: '10:40' },
 ]
 
 /* ── 고정형 가스검침기 (5종 복합가스: O₂ · H₂S · CO · NH₃ · CH₄) ───
@@ -358,6 +368,8 @@ export const portableGasDetectors: PortableGasDetector[] = [
   { id: 'PGAS-03', workerId: 4, o2: 19.2, h2s: 2.4, co: 8.5, nh3: 18.2, ch4: 5.4 },
   { id: 'PGAS-04', workerId: 6, o2: 21.1, h2s: 0.1, co: 0.9, nh3: 1.8, ch4: 0.7 },
   { id: 'PGAS-05', workerId: 7, o2: 20.9, h2s: 0.0, co: 1.1, nh3: 0.9, ch4: 0.4 },
+  { id: 'PGAS-06', workerId: 9, o2: 20.9, h2s: 0.1, co: 0.7, nh3: 2.4, ch4: 1.9 },
+  { id: 'PGAS-07', workerId: 12, o2: 20.7, h2s: 0.5, co: 1.9, nh3: 7.2, ch4: 2.6 },
 ]
 
 /* ── 가스 농도 판정 기준
@@ -469,6 +481,8 @@ export const workItems: WorkItem[] = [
   { name: '전처리조 내부 점검', risk: '상', type: '밀폐', space: '지하층', zone: '축산전처리동', workers: '최성훈 외 3', planDt: '07-14 10:00', startDt: '07-14 10:20', status: '작업중' },
   { name: '수배전반 점검', risk: '중', type: '전기', space: '지상층', zone: '전기실', workers: '임동혁', planDt: '07-14 13:00', startDt: '-', status: '작업대기' },
   { name: '실험동 배기 덕트 교체', risk: '하', type: '일반', space: '지하층', zone: '실험동', workers: '한지훈 외 1', planDt: '07-14 08:30', startDt: '07-14 08:40', status: '완료' },
+  { name: '건조 슬러지 반출', risk: '하', type: '일반', space: '지상층', zone: '슬러지건조동', workers: '박준서', planDt: '07-14 09:00', startDt: '07-14 09:10', status: '작업중' },
+  { name: '소화가스 배관 기밀 점검', risk: '중', type: '가스', space: '지상층', zone: '소화조동', workers: '서동원 외 1', planDt: '07-14 14:00', startDt: '-', status: '작업대기' },
 ]
 
 /* ── 고정형 비콘 / 트래커 목록 ────────────────────────────────────── */
@@ -508,6 +522,11 @@ export const trackerRows: TrackerRow[] = [
   { name: 'TR-0104', worker: '최성훈', sos: false, battery: 47, use: true, lastDt: '2026.07.14 (13:45)' },
   { name: 'TR-0105', worker: '정우진', sos: false, battery: 18, use: true, lastDt: '2026.07.14 (13:41)' },
   { name: 'TR-0106', worker: '한지훈', sos: false, battery: 73, use: true, lastDt: '2026.07.14 (13:45)' },
+  { name: 'TR-0107', worker: '서동원', sos: false, battery: 76, use: true, lastDt: '2026.07.14 (13:45)' },
+  { name: 'TR-0108', worker: '김도현', sos: false, battery: 58, use: true, lastDt: '2026.07.14 (13:44)' },
+  { name: 'TR-0109', worker: '박준서', sos: false, battery: 88, use: true, lastDt: '2026.07.14 (13:45)' },
+  { name: 'TR-0110', worker: '이승우', sos: false, battery: 34, use: true, lastDt: '2026.07.14 (13:43)' },
+  { name: 'TR-0111', worker: '최민석', sos: false, battery: 69, use: true, lastDt: '2026.07.14 (13:45)' },
 ]
 
 /* ── 위급 상황 현황 (하단 패널) ───────────────────────────────────── */
