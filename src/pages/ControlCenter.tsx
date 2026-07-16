@@ -500,7 +500,7 @@ function WorkListTable() {
   const highRisk = workItems.filter((w) => w.risk === '상' && w.status === '작업중').length
   const items = filter === '전체' ? workItems : workItems.filter((w) => w.status === filter)
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex min-h-0 flex-1 flex-col">
       {/* 상태 필터 칩 + 위험 작업 요약 */}
       <div className="flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-hairline px-3 py-2">
         {(['전체', '작업중', '작업대기', '완료'] as const).map((s) => (
@@ -522,7 +522,7 @@ function WorkListTable() {
           </span>
         )}
       </div>
-      <div className="scrollbar-mini max-h-[340px] min-h-0 flex-1 overflow-auto">
+      <div className="scrollbar-mini min-h-0 flex-1 overflow-auto">
         <table className="w-full min-w-[860px]">
           <thead className="sticky top-0 bg-surface-1">
             <tr className="border-b border-hairline">
@@ -676,14 +676,16 @@ function TabGrid() {
   const activeWorks = workItems.filter((w) => w.status === '작업중').length
   return (
     <Card className="flex min-h-0 flex-1 flex-col !p-0">
-      <div className="flex items-center gap-2 overflow-x-auto border-b border-hairline px-3 py-2">
+      {/* 탭 바 — 최소 폭(1280)에서도 넘치지 않게 컴팩트 구성.
+       * 가로 오버플로가 없어야 탭 클릭 시 스트립이 밀리며 헤더가 흔들리지 않는다 */}
+      <div className="scrollbar-mini flex shrink-0 items-center gap-1 overflow-x-auto border-b border-hairline px-2 py-2">
         {/* 현황 그룹 — 인원·장비 */}
         <div className="flex shrink-0 items-center gap-0.5 rounded-lg bg-page/60 p-0.5">
           {STATUS_TABS.map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
-              className={`h-8 shrink-0 cursor-pointer whitespace-nowrap rounded-md px-3 text-[13px] font-medium transition-colors ${
+              className={`h-8 shrink-0 cursor-pointer whitespace-nowrap rounded-md px-2.5 text-[12px] font-medium transition-colors ${
                 tab === t ? 'bg-primary text-white' : 'text-ink-2 hover:bg-surface-2'
               }`}
             >
@@ -695,31 +697,31 @@ function TabGrid() {
         {/* 작업 목록 — 현황과 성격이 다른 탭이라 테두리+아이콘+배지로 구분 */}
         <button
           onClick={() => setTab('작업 목록')}
-          className={`flex h-9 shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-lg border px-3.5 text-[13px] font-semibold transition-colors ${
+          className={`flex h-9 shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap rounded-lg border px-2.5 text-[12px] font-semibold transition-colors ${
             tab === '작업 목록'
               ? 'border-primary bg-primary text-white'
               : 'border-primary/40 text-ink-2 hover:bg-primary/10 hover:text-ink'
           }`}
         >
-          <ClipboardList size={14} />
+          <ClipboardList size={13} />
           작업 목록
           <span
-            className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+            className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
               tab === '작업 목록' ? 'bg-white/20 text-white' : 'bg-primary/15 text-primary'
             }`}
           >
             진행 {activeWorks}
           </span>
         </button>
-        <span className="ml-auto shrink-0 whitespace-nowrap pl-2 text-[11px] text-muted">
-          Results : {TAB_COUNTS[tab]}
+        <span className="ml-auto hidden shrink-0 whitespace-nowrap pl-1 text-[11px] tabular-nums text-muted min-[1360px]:inline">
+          {TAB_COUNTS[tab]}건
         </span>
       </div>
-      {/* 탭 본문 — 세로로 카드가 길어지지 않게 높이 캡 + 미니 스크롤 */}
+      {/* 탭 본문 — 카드가 가용 높이를 채우고 넘치는 내용은 미니 스크롤 */}
       {tab === '작업 목록' ? (
         <WorkListTable />
       ) : (
-        <div className="scrollbar-mini max-h-[380px] min-h-0 flex-1 overflow-auto">
+        <div className="scrollbar-mini min-h-0 flex-1 overflow-auto">
           {tab === '작업자' && <WorkerTable />}
           {tab === '이동형 검침기' && <PortableGasTable />}
           {tab === '고정형 비콘' && <BeaconTable />}
@@ -897,7 +899,9 @@ const BottomPanels = memo(function BottomPanels() {
 export default function ControlCenter() {
   return (
     <div className="flex min-h-full flex-col gap-3">
-      <div className="flex min-h-[600px] flex-1 gap-3">
+      {/* basis-0: 행 높이를 콘텐츠가 아닌 가용 공간으로 확정 —
+       * 탭 카드가 남는 높이를 채우고 내부 스크롤하며, 섹션 접기 시 함께 늘어난다 */}
+      <div className="flex min-h-[600px] flex-1 basis-0 gap-3">
         <Card className="flex w-[55%] min-w-[520px] flex-col !p-3">
           <SiteMap />
         </Card>
