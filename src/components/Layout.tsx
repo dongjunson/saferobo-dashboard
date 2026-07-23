@@ -6,6 +6,7 @@ import {
   Cpu,
   Droplets,
   LayoutDashboard,
+  Map as MapIcon,
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
@@ -34,6 +35,10 @@ const NAV_GROUPS: Array<{
       { to: '/sensors', label: 'IoT 센서/장비', icon: <Cpu size={20} /> },
       { to: '/alerts', label: '알림 이력', icon: <Bell size={20} /> },
     ],
+  },
+  {
+    title: '도구',
+    items: [{ to: '/map-builder', label: '맵 빌더', icon: <MapIcon size={20} /> }],
   },
 ]
 

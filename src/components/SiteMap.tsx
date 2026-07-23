@@ -16,24 +16,15 @@ import type { CameraPreset, LayerKey } from './Site3D'
 import Sparkline from './Sparkline'
 import { InOutBadge } from './ui'
 import {
-  assessZoneRisks,
   entryLogs,
   floorDefs,
-  gasDetectors,
   gasMetrics,
   genGasHistory,
   gasSeverity,
-  gateways,
   liveWorkers,
-  mapBeacons,
   portableGasDetectors,
-  rooms,
-  stairwells,
-  tunnelEntrances,
-  utilityTunnels,
   workerFloor,
   workerPosition,
-  zones,
   type FloorId,
   type GasDetector,
   type GasLevel,
@@ -41,6 +32,8 @@ import {
   type LiveWorker,
   type Zone,
 } from '../data/site'
+import { useSiteModel, type SiteModel } from '../data/siteModel'
+import TileLayer, { ScaleBar, type BgKind, type ViewBox } from './TileLayer'
 /* three.js 번들은 3D 모드 진입 시에만 로드 */
 const Site3D = lazy(() => import('./Site3D'))
 
@@ -52,8 +45,8 @@ const FLOOR_SHORT = Object.fromEntries(floorDefs.map((f) => [f.id, f.short])) as
 const floorStepBtn =
   'flex h-7 w-7 cursor-pointer items-center justify-center rounded-md text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink disabled:cursor-default disabled:opacity-30'
 
-/* ── 구역 위험도(환경 데이터 기반) — 정적 목업 데이터라 모듈 단위 1회 평가 ── */
-const ZONE_RISK = new Map(assessZoneRisks().map((r) => [r.zone, r]))
+/* 구역 위험도는 현장 모델(siteModel)에서 평가해 내려온다 —
+ * 맵 빌더에서 돌아왔을 때도 재진입 시점 기준 최신 맵으로 판정 */
 const RISK_COLOR: Record<GasLevel, string> = {
   good: 'var(--series-4)',
   warning: 'var(--status-warning)',
@@ -81,6 +74,8 @@ const ALL_LAYERS_ON: Record<LayerKey, boolean> = {
   tunnels: true,
   stairs: true,
   rooms: true,
+  fences: true,
+  facilities: true,
 }
 
 function LayerIcon({ k, is3d }: { k: LayerKey; is3d: boolean }) {
@@ -146,6 +141,19 @@ function LayerIcon({ k, is3d }: { k: LayerKey; is3d: boolean }) {
           <line x1="8" y1="3" x2="8" y2="13" stroke="var(--axis-line)" strokeWidth="1" strokeDasharray="2 1.5" />
         </svg>
       )
+    case 'fences':
+      return (
+        <span
+          className="inline-block size-3 rounded-[3px] border border-dashed"
+          style={{ borderColor: 'var(--status-warning)', background: 'rgba(251,191,36,0.15)' }}
+        />
+      )
+    case 'facilities':
+      return (
+        <span className="inline-flex h-3 w-[18px] items-center justify-center rounded-[3px] bg-[#06b6d4] text-[6px] font-bold leading-none text-white">
+          CC
+        </span>
+      )
     case 'stairs':
       return is3d ? (
         /* 3D: 계단 플라이트 */
@@ -171,16 +179,11 @@ const LAYER_ROWS: Array<{ key: LayerKey; label: string }> = [
   { key: 'beacons', label: '고정형 비콘' },
   { key: 'gateways', label: '게이트웨이' },
   { key: 'gas', label: '고정형 가스검침기' },
+  { key: 'fences', label: '지오펜스' },
+  { key: 'facilities', label: '기타 설비' },
   { key: 'tunnels', label: '지하 공동구 · 출입구' },
   { key: 'stairs', label: '계단실' },
 ]
-
-interface ViewBox {
-  x: number
-  y: number
-  w: number
-  h: number
-}
 
 function parsePoints(points: string): Array<[number, number]> {
   return points
@@ -192,103 +195,16 @@ function parsePoints(points: string): Array<[number, number]> {
 const toStr = (pts: Array<[number, number]>) =>
   pts.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ')
 
-/* ── 실제 지도 타일 배경 (2D 전용) ────────────────────────────────────
- * 로컬 좌표(1unit ≈ 1.25m)를 현장 앵커(경기 군포) 기준 Web Mercator로
- * 변환해 타일을 SVG <image>로 깐다. viewBox 줌/팬과 자동 정합. */
-type BgKind = 'none' | 'map' | 'sat'
-
-const WORLD = 40075016.686
-const R_MERC = 6378137
-const M_PER_UNIT = 1.25
-const ANCHOR = { lat: 37.3503, lng: 126.9401 } // 군포 하수도 사업소(당정동) 인근
-const AX = (R_MERC * ANCHOR.lng * Math.PI) / 180
-const AY = R_MERC * Math.log(Math.tan(Math.PI / 4 + (ANCHOR.lat * Math.PI) / 360))
-
-function tileUrl(kind: BgKind, z: number, x: number, y: number, light: boolean) {
-  if (kind === 'sat')
-    return `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`
-  const style = light ? 'light_all' : 'dark_all'
-  return `https://${'abcd'[(x + y) % 4]}.basemaps.cartocdn.com/${style}/${z}/${x}/${y}.png`
-}
-
-function TileLayer({ vb, kind, screenW }: { vb: ViewBox; kind: BgKind; screenW: number }) {
-  const light = document.documentElement.dataset.theme === 'light'
-  const res = (vb.w * M_PER_UNIT) / screenW // 화면 px당 미터
-  const z = Math.max(3, Math.min(19, Math.round(Math.log2(WORLD / (256 * res)))))
-  const n = 2 ** z
-  const ts = WORLD / n // 타일 한 변(m)
-  const mx0 = AX + (vb.x - 500) * M_PER_UNIT
-  const mx1 = AX + (vb.x + vb.w - 500) * M_PER_UNIT
-  const myTop = AY - (vb.y - 320) * M_PER_UNIT
-  const myBot = AY - (vb.y + vb.h - 320) * M_PER_UNIT
-  const tx0 = Math.floor((mx0 + WORLD / 2) / ts)
-  const tx1 = Math.floor((mx1 + WORLD / 2) / ts)
-  const ty0 = Math.floor((WORLD / 2 - myTop) / ts)
-  const ty1 = Math.floor((WORLD / 2 - myBot) / ts)
-  const tiles: Array<{ key: string; href: string; x: number; y: number; s: number }> = []
-  for (let tx = tx0; tx <= tx1; tx++) {
-    for (let ty = ty0; ty <= ty1; ty++) {
-      if (tx < 0 || ty < 0 || tx >= n || ty >= n) continue
-      const mercX = -WORLD / 2 + tx * ts
-      const mercYtop = WORLD / 2 - ty * ts
-      tiles.push({
-        key: `${z}/${tx}/${ty}`,
-        href: tileUrl(kind, z, tx, ty, light),
-        x: 500 + (mercX - AX) / M_PER_UNIT,
-        y: 320 + (AY - mercYtop) / M_PER_UNIT,
-        s: ts / M_PER_UNIT,
-      })
-    }
-  }
-  if (tiles.length > 120) return null // 과도한 타일 요청 방지
-  return (
-    <g pointerEvents="none">
-      {tiles.map((t) => (
-        <image
-          key={t.key}
-          href={t.href}
-          x={t.x}
-          y={t.y}
-          width={t.s * 1.002}
-          height={t.s * 1.002}
-          preserveAspectRatio="none"
-          opacity={kind === 'sat' ? 0.88 : 0.92}
-        />
-      ))}
-    </g>
-  )
-}
-
-/* ── 동적 축척 바 ─────────────────────────────────────────────────────
- * 현재 viewBox·컨테이너 크기에서 화면 px당 실거리(m)를 구해
- * 1-2-5 스텝의 보기 좋은 거리로 스냅한다. 줌인/줌아웃과 항상 정합. */
-function niceDistance(maxMeters: number): number {
-  const pow = 10 ** Math.floor(Math.log10(maxMeters))
-  const d = maxMeters / pow
-  return (d >= 5 ? 5 : d >= 2 ? 2 : 1) * pow
-}
-
-function ScaleBar({ vb, wrap }: { vb: ViewBox; wrap: HTMLDivElement | null }) {
-  const rw = wrap?.clientWidth ?? 900
-  const rh = wrap?.clientHeight ?? 576
-  const s = Math.min(rw / vb.w, rh / vb.h) // 화면 px / 로컬 unit (meet 보정)
-  const mPerPx = M_PER_UNIT / s
-  const meters = niceDistance(mPerPx * 100) // 바 최대 폭 100px
-  const label = meters >= 1000 ? `${meters / 1000} km` : `${meters} m`
-  return (
-    <span className="flex items-end gap-1.5">
-      <span
-        className="inline-block h-[5px]"
-        style={{
-          width: meters / mPerPx,
-          borderLeft: '1px solid var(--axis-line)',
-          borderRight: '1px solid var(--axis-line)',
-          borderBottom: '1px solid var(--axis-line)',
-        }}
-      />
-      <span className="tabular-nums">{label}</span>
-    </span>
-  )
+/** 타원형 구역(맵 빌더 제작)의 bbox → SVG ellipse 파라미터 */
+function zoneEllipse(z: Zone) {
+  const pts = parsePoints(z.points)
+  const xs = pts.map((p) => p[0])
+  const ys = pts.map((p) => p[1])
+  const x0 = Math.min(...xs)
+  const y0 = Math.min(...ys)
+  const x1 = Math.max(...xs)
+  const y1 = Math.max(...ys)
+  return { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, rx: (x1 - x0) / 2, ry: (y1 - y0) / 2 }
 }
 
 /* ── 줌/팬 viewBox 연산 ───────────────────────────────────────────── */
@@ -319,18 +235,23 @@ function clientToVb(
 
 /* ── 정적 레이어 (선택 층·줌 배율에만 반응) — 2D 평면도 ───────────── */
 const StaticLayers = memo(function StaticLayers({
+  model,
   floor,
   k,
   showGrid = true,
   show,
   onZoneOpen,
 }: {
+  model: SiteModel
   floor: FloorId
   k: number
   showGrid?: boolean
   show: Record<LayerKey, boolean>
   onZoneOpen: (name: string) => void
 }) {
+  const { zones, gateways, mapBeacons, gasDetectors, stairwells, rooms, utilityTunnels, zoneRisk } =
+    model
+  const tunnelEntrances = model.tunnelEntrances
   const layers = useMemo(() => {
     const gridLines: string[] = []
     for (let gx = 0; gx <= 1000; gx += 80) gridLines.push(toStr([[gx, 0], [gx, 640]]))
@@ -339,7 +260,7 @@ const StaticLayers = memo(function StaticLayers({
     /* 선택 층의 평면도만 표시 */
     const zs = zones
       .filter((z) => z.floors.includes(floor))
-      .map((z) => ({ ...z, risk: (ZONE_RISK.get(z.name)?.level ?? 'good') as GasLevel }))
+      .map((z) => ({ ...z, risk: (zoneRisk.get(z.name)?.level ?? 'good') as GasLevel }))
     const bs = mapBeacons.filter((b) => (b.level ?? 'F1') === floor)
     const gs = floor === 'F1' ? gateways : []
     const gds = (floor === 'F1' ? gasDetectors : []).map((g) => ({ ...g, lvl: gasSeverity(g) }))
@@ -358,8 +279,11 @@ const StaticLayers = memo(function StaticLayers({
     const rms = rooms
       .filter((r) => r.level === floor)
       .map((r) => ({ ...r, ly: Math.min(...parsePoints(r.points).map((p) => p[1])) + 11 }))
-    return { gridLines, zs, bs, gs, gds, tns, tl, stairs, rms }
-  }, [floor])
+    /* 지오펜스·기타 설비 — 맵 빌더 제작 요소, 선택 층만 */
+    const fences = model.geofences.filter((f) => f.floor === floor)
+    const fcs = model.facilities.filter((f) => f.floor === floor)
+    return { gridLines, zs, bs, gs, gds, tns, tl, stairs, rms, fences, fcs }
+  }, [floor, model, zones, gateways, mapBeacons, gasDetectors, stairwells, rooms, utilityTunnels, zoneRisk])
 
   const fontSize = Math.max(6, Math.min(14, 12 * k))
   const km = Math.min(k, 2.5) // 장비 마커는 광역 줌아웃에서 과대해지지 않도록 별도 상한
@@ -387,7 +311,7 @@ const StaticLayers = memo(function StaticLayers({
                 points={t.pts}
                 fill="none"
                 stroke="var(--series-1)"
-                strokeWidth="20"
+                strokeWidth={t.width ?? 20}
                 strokeLinecap="round"
                 strokeLinejoin="round"
               >
@@ -426,6 +350,19 @@ const StaticLayers = memo(function StaticLayers({
       )}
       {layers.zs.map((z) => {
         const zc = RISK_COLOR[z.risk]
+        const zoneShapeProps = {
+          fill: zc,
+          fillOpacity: z.risk === 'good' ? 0.1 : 0.16,
+          stroke: zc,
+          strokeOpacity: z.risk === 'good' ? 0.5 : 0.75,
+          strokeWidth: z.risk === 'good' ? 1.2 : 1.8,
+          strokeDasharray: dash,
+          vectorEffect: 'non-scaling-stroke',
+        } as const
+        const zoneAnim = z.risk !== 'good' && (
+          <animate attributeName="fill-opacity" values="0.16;0.3;0.16" dur="2s" repeatCount="indefinite" />
+        )
+        const ell = z.shape === 'ellipse' ? zoneEllipse(z) : null
         return (
           <g
             key={z.id}
@@ -436,20 +373,15 @@ const StaticLayers = memo(function StaticLayers({
             }}
           >
             <title>{`${z.name} · 클릭하면 건물 상세 보기`}</title>
-            <polygon
-              points={z.points}
-              fill={zc}
-              fillOpacity={z.risk === 'good' ? 0.1 : 0.16}
-              stroke={zc}
-              strokeOpacity={z.risk === 'good' ? 0.5 : 0.75}
-              strokeWidth={z.risk === 'good' ? 1.2 : 1.8}
-              strokeDasharray={dash}
-              vectorEffect="non-scaling-stroke"
-            >
-              {z.risk !== 'good' && (
-                <animate attributeName="fill-opacity" values="0.16;0.3;0.16" dur="2s" repeatCount="indefinite" />
-              )}
-            </polygon>
+            {ell ? (
+              <ellipse cx={ell.cx} cy={ell.cy} rx={ell.rx} ry={ell.ry} {...zoneShapeProps}>
+                {zoneAnim}
+              </ellipse>
+            ) : (
+              <polygon points={z.points} {...zoneShapeProps}>
+                {zoneAnim}
+              </polygon>
+            )}
             <text x={z.labelX} y={z.labelY} textAnchor="middle" fontSize={fontSize} fill="var(--text-muted)" fontWeight="500">
               {z.name}
             </text>
@@ -471,6 +403,61 @@ const StaticLayers = memo(function StaticLayers({
           </g>
         )
       })}
+      {/* 지오펜스(맵 빌더 제작) — 등급 색 점선 감시 구역 */}
+      {show.fences && layers.fences.map((f) => (
+        <g key={f.id} pointerEvents="none">
+          {f.path ? (
+            <path
+              d={f.path}
+              fill={f.color}
+              fillOpacity="0.1"
+              stroke={f.color}
+              strokeWidth="1.6"
+              strokeDasharray="6 4"
+              vectorEffect="non-scaling-stroke"
+            />
+          ) : f.shape === 'ellipse' ? (
+            <ellipse
+              cx={f.x + f.w / 2}
+              cy={f.y + f.h / 2}
+              rx={f.w / 2}
+              ry={f.h / 2}
+              fill={f.color}
+              fillOpacity="0.1"
+              stroke={f.color}
+              strokeWidth="1.6"
+              strokeDasharray="6 4"
+              vectorEffect="non-scaling-stroke"
+            />
+          ) : (
+            <rect
+              x={f.x}
+              y={f.y}
+              width={f.w}
+              height={f.h}
+              rx="4"
+              fill={f.color}
+              fillOpacity="0.1"
+              stroke={f.color}
+              strokeWidth="1.6"
+              strokeDasharray="6 4"
+              vectorEffect="non-scaling-stroke"
+            />
+          )}
+          <text
+            x={f.x + 6}
+            y={f.y + 13}
+            fontSize={fontSize * 0.8}
+            fontWeight="600"
+            fill={f.color}
+            paintOrder="stroke"
+            stroke="var(--page)"
+            strokeWidth="2"
+          >
+            {f.name}
+          </text>
+        </g>
+      ))}
       {/* 작업영역(Room) — 건물 내 세부 구획: 점선 구획선 + 이름 */}
       {show.rooms && layers.rms.map((r) => (
         <g key={r.id} pointerEvents="none">
@@ -557,6 +544,27 @@ const StaticLayers = memo(function StaticLayers({
             fill="var(--surface-1)"
             pointerEvents="none"
           />
+        </g>
+      ))}
+      {/* 기타 설비(맵 빌더 심볼) — 출입구는 도면식 문 심볼, 그 외 코드 칩 */}
+      {show.facilities && showDevices && layers.fcs.map((f) => (
+        <g key={f.id} transform={`translate(${f.x}, ${f.y}) scale(${km})`}>
+          <title>{`${f.name} · ${f.label}`}</title>
+          {f.type === 'door' ? (
+            /* 출입구 — 벽 개구부 심볼 (문지방 + 양측 문설주, 방향성 없음) */
+            <g transform={f.rot ? `rotate(${f.rot})` : undefined}>
+              <line x1={-(f.width ?? 12) / 2} y1="0" x2={(f.width ?? 12) / 2} y2="0" stroke={f.color} strokeWidth="4" opacity="0.8" />
+              <line x1={-(f.width ?? 12) / 2} y1="-4.5" x2={-(f.width ?? 12) / 2} y2="4.5" stroke={f.color} strokeWidth="1.6" />
+              <line x1={(f.width ?? 12) / 2} y1="-4.5" x2={(f.width ?? 12) / 2} y2="4.5" stroke={f.color} strokeWidth="1.6" />
+            </g>
+          ) : (
+            <>
+              <rect x="-13" y="-8" width="26" height="16" rx="4" fill={f.color} opacity="0.92" />
+              <text y="3.5" textAnchor="middle" fontSize="8" fontWeight="700" fill="white" pointerEvents="none">
+                {f.code}
+              </text>
+            </>
+          )}
         </g>
       ))}
       {/* 공동구 출입구(수직구·계단실) */}
@@ -821,14 +829,18 @@ function ZoneGasChart({ det }: { det: GasDetector }) {
  * 좌: three.js 3D(회전·줌·팬, 전체 층) 또는 층 탭 + 확대 평면도(실시간 위치)
  * 우: 위험도 판정 근거 · 재실 작업자 · 고정형 검침기 · 설비 요약 */
 function ZoneDetailModal({
+  model,
   zone,
   tick,
   onClose,
 }: {
+  model: SiteModel
   zone: Zone
   tick: number
   onClose: () => void
 }) {
+  const { mapBeacons, gasDetectors, gateways, stairwells, rooms, utilityTunnels, tunnelEntrances, zoneRisk } =
+    model
   const floorsSorted = [...zone.floors].sort((a, b) => LV_ORDER[b] - LV_ORDER[a]) // 지상 → 지하
   const [vmode, setVmode] = useState<'3d' | '2d'>('3d') // 건물 상세는 3D가 기본
   const [fl, setFl] = useState<FloorId>(floorsSorted[0])
@@ -840,7 +852,7 @@ function ZoneDetailModal({
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const risk = ZONE_RISK.get(zone.name)
+  const risk = zoneRisk.get(zone.name)
   const level: GasLevel = risk?.level ?? 'good'
   const zc = RISK_COLOR[level]
 
@@ -952,7 +964,7 @@ function ZoneDetailModal({
                     </div>
                   }
                 >
-                  <Site3D focusZone={zone.name} />
+                  <Site3D focusZone={zone.name} model={model} />
                 </Suspense>
               ) : (
               <svg viewBox={`${x0} ${y0} ${bw} ${bh}`} className="h-full w-full" role="img" aria-label={`${zone.name} 상세 평면도`}>
@@ -961,7 +973,7 @@ function ZoneDetailModal({
                   <g>
                     <g opacity={fl === 'B2' ? 0.12 : 0.16}>
                       {tuns.map((t) => (
-                        <polyline key={t.id} points={toStr(t.path)} fill="none" stroke="var(--series-1)" strokeWidth="20" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline key={t.id} points={toStr(t.path)} fill="none" stroke="var(--series-1)" strokeWidth={t.width ?? 20} strokeLinecap="round" strokeLinejoin="round">
                           <title>{`${t.name} (${FLOOR_SHORT[t.level]})`}</title>
                         </polyline>
                       ))}
@@ -973,20 +985,61 @@ function ZoneDetailModal({
                     </g>
                   </g>
                 )}
-                {/* 구역 평면 폴리곤 — 위험도 색 */}
-                <polygon
-                  points={zone.points}
-                  fill={zc}
-                  fillOpacity={level === 'good' ? 0.08 : 0.13}
-                  stroke={zc}
-                  strokeOpacity="0.7"
-                  strokeWidth="1.6"
-                  vectorEffect="non-scaling-stroke"
-                >
-                  {level !== 'good' && (
-                    <animate attributeName="fill-opacity" values="0.13;0.24;0.13" dur="2s" repeatCount="indefinite" />
-                  )}
-                </polygon>
+                {/* 구역 평면(직각 폴리곤/타원) — 위험도 색 */}
+                {zone.shape === 'ellipse' ? (
+                  (() => {
+                    const e = zoneEllipse(zone)
+                    return (
+                      <ellipse
+                        cx={e.cx}
+                        cy={e.cy}
+                        rx={e.rx}
+                        ry={e.ry}
+                        fill={zc}
+                        fillOpacity={level === 'good' ? 0.08 : 0.13}
+                        stroke={zc}
+                        strokeOpacity="0.7"
+                        strokeWidth="1.6"
+                        vectorEffect="non-scaling-stroke"
+                      >
+                        {level !== 'good' && (
+                          <animate attributeName="fill-opacity" values="0.13;0.24;0.13" dur="2s" repeatCount="indefinite" />
+                        )}
+                      </ellipse>
+                    )
+                  })()
+                ) : (
+                  <polygon
+                    points={zone.points}
+                    fill={zc}
+                    fillOpacity={level === 'good' ? 0.08 : 0.13}
+                    stroke={zc}
+                    strokeOpacity="0.7"
+                    strokeWidth="1.6"
+                    vectorEffect="non-scaling-stroke"
+                  >
+                    {level !== 'good' && (
+                      <animate attributeName="fill-opacity" values="0.13;0.24;0.13" dur="2s" repeatCount="indefinite" />
+                    )}
+                  </polygon>
+                )}
+                {/* 지오펜스 — 선택 층의 감시 구역 (viewBox 클리핑으로 주변만 표시) */}
+                {model.geofences
+                  .filter((f) => f.floor === fl)
+                  .map((f) => (
+                    <g key={f.id} pointerEvents="none">
+                      {f.path ? (
+                        <path d={f.path} fill={f.color} fillOpacity="0.1" stroke={f.color} strokeWidth="1.4" strokeDasharray="6 4" vectorEffect="non-scaling-stroke" />
+                      ) : f.shape === 'ellipse' ? (
+                        <ellipse cx={f.x + f.w / 2} cy={f.y + f.h / 2} rx={f.w / 2} ry={f.h / 2} fill={f.color} fillOpacity="0.1" stroke={f.color} strokeWidth="1.4" strokeDasharray="6 4" vectorEffect="non-scaling-stroke" />
+                      ) : (
+                        <rect x={f.x} y={f.y} width={f.w} height={f.h} rx="4" fill={f.color} fillOpacity="0.1" stroke={f.color} strokeWidth="1.4" strokeDasharray="6 4" vectorEffect="non-scaling-stroke" />
+                      )}
+                      <text x={f.x + 6} y={f.y + 13} fontSize={9 * msc} fontWeight="600" fill={f.color} paintOrder="stroke" stroke="var(--page)" strokeWidth="2">
+                        {f.name}
+                      </text>
+                    </g>
+                  ))}
                 {/* 작업영역(Room) — 선택 층의 건물 내 구획 */}
                 {rooms
                   .filter((r) => r.zone === zone.name && r.level === fl)
@@ -1324,6 +1377,8 @@ function HistoryPanel({
  * 휠/버튼 줌·드래그 팬, 작업자 선택 시 이동 궤적 + 위치 이력.
  */
 export default function SiteMap() {
+  /* 현장 모델 — 마운트 시 맵 빌더 저장본을 해석 (없으면 기본 사업소) */
+  const model = useSiteModel()
   const [tick, setTick] = useState(0)
   const [mode, setMode] = useState<MapMode>('2d')
   const [floor, setFloor] = useState<FloorId>('F1')
@@ -1558,9 +1613,10 @@ export default function SiteMap() {
             aria-label="현장 실시간 위치 지도"
           >
             {mode === '2d' && bg !== 'none' && (
-              <TileLayer vb={vb} kind={bg} screenW={wrapRef.current?.clientWidth ?? 900} />
+              <TileLayer vb={vb} kind={bg} screenW={wrapRef.current?.clientWidth ?? 900} anchor={model.anchor} />
             )}
             <StaticLayers
+              model={model}
               floor={floor}
               k={k}
               showGrid={bg === 'none'}
@@ -1584,7 +1640,7 @@ export default function SiteMap() {
             }
           >
             {/* 3D는 층 구분 없이 전체 사업소(건물·공동구)를 모두 표시, 건물 클릭 → 상세 */}
-            <Site3D onZoneOpen={setDetailZone} layers={layersOn} preset={preset3d} autoRotate={rotate3d} />
+            <Site3D model={model} onZoneOpen={setDetailZone} layers={layersOn} preset={preset3d} autoRotate={rotate3d} />
           </Suspense>
         )}
 
@@ -1662,7 +1718,11 @@ export default function SiteMap() {
                 </button>
               </div>
               <ul className="flex flex-col gap-0.5">
-                {LAYER_ROWS.map((row) => (
+                {LAYER_ROWS.filter(
+                  (row) =>
+                    (row.key !== 'fences' || model.geofences.length > 0) &&
+                    (row.key !== 'facilities' || model.facilities.length > 0),
+                ).map((row) => (
                   <li key={row.key}>
                     <button
                       onClick={() => setLayersOn((prev) => ({ ...prev, [row.key]: !prev[row.key] }))}
@@ -1709,7 +1769,8 @@ export default function SiteMap() {
       {detailZone && (
         <ZoneDetailModal
           key={detailZone}
-          zone={zones.find((z) => z.name === detailZone)!}
+          model={model}
+          zone={model.zones.find((z) => z.name === detailZone)!}
           tick={tick}
           onClose={() => setDetailZone(null)}
         />

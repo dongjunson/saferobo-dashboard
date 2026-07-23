@@ -37,6 +37,10 @@ export interface Zone {
   labelY: number
   /** 건물이 존재하는 층 — 지상만/지하만/복합을 구분 */
   floors: FloorId[]
+  /** 평면 형태 — 맵 빌더 제작 건물용. poly는 points를 그대로 볼륨 단면으로 사용 */
+  shape?: 'rect' | 'ellipse' | 'poly'
+  /** 지상 층수 — 맵 빌더 건물의 3D 높이용. 생략 시 F1 포함 여부로 1/0층 */
+  upFloors?: number
 }
 
 export const siteBoundary =
@@ -125,6 +129,8 @@ export interface TunnelSegment {
   path: Array<[number, number]>
   /** 공동구가 지나는 층 (B1/B2) */
   level: FloorId
+  /** 통로 폭 — 맵 빌더 제작 공동구용 (기본 18) */
+  width?: number
 }
 
 export const utilityTunnels: TunnelSegment[] = [
@@ -414,11 +420,12 @@ export interface ZoneRisk {
 
 const LEVEL_ORDER: Record<GasLevel, number> = { critical: 0, warning: 1, good: 2 }
 
-export function assessZoneRisks(): ZoneRisk[] {
-  return zones
+/** 구역 위험도 평가 — 맵 빌더 제작 맵도 평가할 수 있도록 대상 구역·검침기를 주입 가능 */
+export function assessZoneRisks(zs: Zone[] = zones, gds: GasDetector[] = gasDetectors): ZoneRisk[] {
+  return zs
     .map((z) => {
       const sources: Array<{ label: string; cur: GasReading }> = []
-      const fixed = gasDetectors.filter((g) => g.zone === z.name)
+      const fixed = gds.filter((g) => g.zone === z.name)
       fixed.forEach((g) => sources.push({ label: `고정형 ${g.id}`, cur: g }))
       const inZone = liveWorkers.filter((w) => w.outTime === null && w.zone === z.name)
       const portables = portableGasDetectors.filter((p) =>
@@ -496,15 +503,19 @@ export interface BeaconRow {
   scanDt: string
 }
 
-export const beaconRows: BeaconRow[] = mapBeacons.map((b, i) => ({
-  name: b.id,
-  major: 100 + Math.floor(i / 4),
-  minor: 1000 + i,
-  space: b.level === 'B2' ? '지하 2층' : b.level === 'B1' ? '지하층' : '지상층',
-  zone: b.zone,
-  use: true,
-  scanDt: '2026.07.14 (13:4' + (i % 10) + ')',
-}))
+/** 비콘 좌표 목록 → 관리 테이블 행 — 맵 빌더 제작 비콘에도 재사용 */
+export const makeBeaconRows = (bs: MapPoint[]): BeaconRow[] =>
+  bs.map((b, i) => ({
+    name: b.id,
+    major: 100 + Math.floor(i / 4),
+    minor: 1000 + i,
+    space: b.level === 'B2' ? '지하 2층' : b.level === 'B1' ? '지하층' : '지상층',
+    zone: b.zone,
+    use: true,
+    scanDt: '2026.07.14 (13:4' + (i % 10) + ')',
+  }))
+
+export const beaconRows: BeaconRow[] = makeBeaconRows(mapBeacons)
 
 export interface TrackerRow {
   name: string

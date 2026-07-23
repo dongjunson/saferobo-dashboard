@@ -5,11 +5,8 @@ import SiteMap from '../components/SiteMap'
 import Sparkline from '../components/Sparkline'
 import { Card, InOutBadge, SeverityBadge } from '../components/ui'
 import {
-  assessZoneRisks,
-  beaconRows,
   controlKpi,
   emergencyRows,
-  gasDetectors,
   gasMetrics,
   gasSeverity,
   genGasHistory,
@@ -20,6 +17,7 @@ import {
   zoneAlarmStats,
 } from '../data/site'
 import type { GasLevel, GasMetricKey } from '../data/site'
+import { useSiteModel } from '../data/siteModel'
 import { sensors } from '../data/mock'
 
 /** 검침기별 5종 가스 히스토리 (스파크라인용 최근 60초) */
@@ -204,6 +202,7 @@ function GasFullscreen({
   time: string
   onClose: () => void
 }) {
+  const { gasDetectors } = useSiteModel()
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
     window.addEventListener('keydown', onKey)
@@ -267,6 +266,7 @@ function GasFullscreen({
 const GAS_ROTATE_SEC = 5
 
 function GasPanel() {
+  const { gasDetectors } = useSiteModel()
   const [hists, setHists] = useState<GasHists[]>(() =>
     gasDetectors.map(
       (g) =>
@@ -297,7 +297,7 @@ function GasPanel() {
       setTime(new Date().toTimeString().slice(0, 8))
     }, 1000)
     return () => clearInterval(t)
-  }, [])
+  }, [gasDetectors])
 
   /* 슬라이드 자동 순환 — 마우스를 올려 읽는 동안·전체보기 중에는 정지,
    * 수동 이동 시에도 page가 deps에 있어 타이머가 5초부터 다시 시작된다 */
@@ -560,6 +560,7 @@ function WorkListTable() {
 /* ═══ 정적 탭 테이블 ═══ */
 
 const BeaconTable = memo(function BeaconTable() {
+  const { beaconRows } = useSiteModel()
   return (
     <table className="w-full min-w-[760px]">
       <thead className="sticky top-0 bg-surface-1">
@@ -650,16 +651,16 @@ const TrackerTable = memo(function TrackerTable() {
 const STATUS_TABS = ['작업자', '이동형 검침기', '고정형 비콘', '트래커'] as const
 type Tab = (typeof STATUS_TABS)[number] | '작업 목록'
 
-const TAB_COUNTS: Record<Tab, number> = {
-  작업자: liveWorkers.length,
-  '이동형 검침기': portableGasDetectors.length,
-  '작업 목록': workItems.length,
-  '고정형 비콘': beaconRows.length,
-  트래커: trackerRows.length,
-}
-
 function TabGrid() {
+  const { beaconRows } = useSiteModel()
   const [tab, setTab] = useState<Tab>('작업자')
+  const TAB_COUNTS: Record<Tab, number> = {
+    작업자: liveWorkers.length,
+    '이동형 검침기': portableGasDetectors.length,
+    '작업 목록': workItems.length,
+    '고정형 비콘': beaconRows.length,
+    트래커: trackerRows.length,
+  }
   const activeWorks = workItems.filter((w) => w.status === '작업중').length
   return (
     <Card className="flex min-h-0 flex-1 flex-col !p-0">
@@ -728,8 +729,8 @@ const RISK_META: Record<GasLevel, { label: string; cls: string }> = {
 
 /* ═══ 하단 패널 — 정적, memo 격리 ═══ */
 const BottomPanels = memo(function BottomPanels() {
+  const { zoneRisks } = useSiteModel()
   const lowSensors = sensors.filter((s) => s.state !== '정상')
-  const zoneRisks = assessZoneRisks()
   const total = zoneAlarmStats.reduce((a, b) => a + b.count, 0)
   const colors = ['var(--series-1)', 'var(--series-3)', 'var(--series-4)', 'var(--series-5)']
   const R = 40
