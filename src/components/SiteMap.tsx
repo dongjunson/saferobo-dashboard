@@ -32,6 +32,7 @@ import {
   type LiveWorker,
   type Zone,
 } from '../data/site'
+import { FENCE_COLOR } from '../data/builder'
 import { useSiteModel, type SiteModel } from '../data/siteModel'
 import TileLayer, { Compass, ScaleBar, type BgKind, type ViewBox } from './TileLayer'
 /* three.js 번들은 3D 모드 진입 시에만 로드 */
@@ -142,17 +143,21 @@ function LayerIcon({ k, is3d }: { k: LayerKey; is3d: boolean }) {
         </svg>
       )
     case 'fences':
+      /* 도면과 동일한 가상 영역 톤(FENCE_COLOR 시안) — 점선 경계 */
       return (
         <span
           className="inline-block size-3 rounded-[3px] border border-dashed"
-          style={{ borderColor: 'var(--status-warning)', background: 'rgba(251,191,36,0.15)' }}
+          style={{ borderColor: FENCE_COLOR, background: 'rgba(34,211,238,0.15)' }}
         />
       )
     case 'facilities':
+      /* 출입구 개구부 심볼과 동일한 형태·색 */
       return (
-        <span className="inline-flex h-3 w-[18px] items-center justify-center rounded-[3px] bg-[#06b6d4] text-[6px] font-bold leading-none text-white">
-          CC
-        </span>
+        <svg width="15" height="15" viewBox="-8 -8 16 16">
+          <line x1="-5" y1="0" x2="5" y2="0" stroke="#38bdf8" strokeWidth="3" opacity="0.85" />
+          <line x1="-5" y1="-3.5" x2="-5" y2="3.5" stroke="#38bdf8" strokeWidth="1.4" />
+          <line x1="5" y1="-3.5" x2="5" y2="3.5" stroke="#38bdf8" strokeWidth="1.4" />
+        </svg>
       )
     case 'stairs':
       return is3d ? (

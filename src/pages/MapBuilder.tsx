@@ -168,7 +168,7 @@ const TARGETS: Array<{ k: Tool; label: string; icon: ReactNode }> = [
   { k: 'select', label: '선택 / 이동 — 빈 곳 드래그: 팬 · Shift+드래그: 회전', icon: <MousePointer2 size={16} /> },
   { k: 'building', label: '건물 그리기 — 우측에서 형태(직각·타원·다각형)를 선택', icon: <Building2 size={16} /> },
   { k: 'room', label: '작업영역(Room) 그리기 — 건물 내 층별 세부 구획', icon: <Scan size={16} /> },
-  { k: 'fence', label: '지오펜스 그리기 — 등급별 감시 구역', icon: <Fence size={16} /> },
+  { k: 'fence', label: '지오펜스 그리기 — 감시 구역', icon: <Fence size={16} /> },
   { k: 'tunnel', label: '지하 공동구 — 클릭으로 경유점 추가, Enter로 완성', icon: <Waypoints size={16} /> },
 ]
 
@@ -209,7 +209,7 @@ function Tip({ label, children }: { label: string; children: ReactNode }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>{children}</TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
+      <TooltipContent className="max-w-none whitespace-nowrap">{label}</TooltipContent>
     </Tooltip>
   )
 }
