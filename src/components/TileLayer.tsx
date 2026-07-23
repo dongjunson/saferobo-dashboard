@@ -1,3 +1,5 @@
+import type { Ref } from 'react'
+
 /* ── 실제 지도 타일 배경 (SVG <image>) — SiteMap·맵 빌더 공용 ─────────
  * 로컬 좌표(1unit ≈ 1.25m)를 위경도 앵커(캔버스 중심 500,320) 기준
  * Web Mercator로 변환해 타일을 깐다. viewBox 줌/팬과 자동 정합. */
@@ -20,6 +22,39 @@ function tileUrl(kind: BgKind, z: number, x: number, y: number) {
     return `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`
   const style = 'dark_all'
   return `https://${'abcd'[(x + y) % 4]}.basemaps.cartocdn.com/${style}/${z}/${x}/${y}.png`
+}
+
+/* ── 나침반 — 붉은 침이 북쪽. angle은 화면상 북쪽의 회전각(°).
+ * 2D 캔버스 회전·3D 카메라 방위각과 연동해 축척 바 옆에 작게 표시한다. ── */
+export function Compass({
+  angle = 0,
+  size = 26,
+  svgRef,
+}: {
+  angle?: number
+  size?: number
+  /** 3D 등 프레임 단위 갱신용 — style.transform을 직접 조작 */
+  svgRef?: Ref<SVGSVGElement>
+}) {
+  return (
+    <span
+      className="inline-flex shrink-0 items-center justify-center rounded-full border border-hairline bg-surface-1/85 backdrop-blur-sm"
+      style={{ width: size, height: size }}
+      title="나침반 — 붉은 침이 북쪽"
+    >
+      <svg
+        ref={svgRef}
+        width={size - 8}
+        height={size - 8}
+        viewBox="-10 -10 20 20"
+        style={{ transform: `rotate(${angle}deg)` }}
+      >
+        <path d="M0,-7.5 L2.4,0 L-2.4,0 Z" fill="#f87171" />
+        <path d="M0,7.5 L2.4,0 L-2.4,0 Z" fill="var(--text-muted)" opacity="0.65" />
+        <circle r="1.1" fill="var(--surface-1)" stroke="var(--text-muted)" strokeWidth="0.5" />
+      </svg>
+    </span>
+  )
 }
 
 /* ── 동적 축척 바 — 현재 viewBox·컨테이너 크기에서 화면 px당 실거리(m)를

@@ -9,6 +9,7 @@ import {
   type GasLevel,
 } from '../data/site'
 import type { SiteModel } from '../data/siteModel'
+import { Compass } from './TileLayer'
 import {
   FLOOR_H,
   LEVEL_Y,
@@ -72,6 +73,7 @@ export default function Site3D({
   autoRotate?: boolean
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
+  const compassRef = useRef<SVGSVGElement>(null)
   const openRef = useRef(onZoneOpen)
   openRef.current = onZoneOpen
   const layerObjsRef = useRef<Record<LayerKey, THREE.Object3D[]> | null>(null)
@@ -527,6 +529,11 @@ export default function Site3D({
         }
       }
       controls.update()
+      /* 나침반 — 카메라 방위각에 맞춰 북침 회전 */
+      if (compassRef.current)
+        compassRef.current.style.transform = `rotate(${THREE.MathUtils.radToDeg(
+          controls.getAzimuthalAngle(),
+        )}deg)`
       renderer.render(scene, camera)
     }
     animate()
@@ -616,5 +623,12 @@ export default function Site3D({
     }
   }, [layers, focusZone])
 
-  return <div ref={hostRef} className="absolute inset-0" />
+  return (
+    <div ref={hostRef} className="absolute inset-0">
+      {/* 나침반 — 우하단, 카메라 방위각 연동 (붉은 침 = 북) */}
+      <div className="pointer-events-none absolute bottom-3 right-3 z-10">
+        <Compass size={26} svgRef={compassRef} />
+      </div>
+    </div>
+  )
 }

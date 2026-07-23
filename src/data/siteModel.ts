@@ -81,6 +81,8 @@ export interface SiteModel {
   source: 'builder' | 'default'
   /** 배경 지도 타일용 위경도 앵커 (캔버스 중심 500,320) */
   anchor: { lat: number; lng: number }
+  /** 맵 빌더에서 설정한 기본 도면 회전각(°) — 관제 2D의 초기 회전 */
+  rotation: number
   zones: Zone[]
   gateways: MapPoint[]
   mapBeacons: MapPoint[]
@@ -117,6 +119,7 @@ export function resolveSiteModel(): SiteModel {
     return {
       source: 'default',
       anchor: { ...DEFAULT_ANCHOR },
+      rotation: 0,
       zones,
       gateways,
       mapBeacons,
@@ -288,6 +291,7 @@ export function resolveSiteModel(): SiteModel {
   return {
     source: 'builder',
     anchor: saved.anchor ?? { ...DEFAULT_ANCHOR },
+    rotation: saved.rotation ?? 0,
     zones: bZones,
     gateways: bGateways,
     mapBeacons: bBeacons,

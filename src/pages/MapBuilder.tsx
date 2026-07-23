@@ -34,7 +34,7 @@ import {
 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import Builder3D from '../components/Builder3D'
-import TileLayer, { ScaleBar, type BgKind, type ViewBox } from '../components/TileLayer'
+import TileLayer, { Compass, ScaleBar, type BgKind, type ViewBox } from '../components/TileLayer'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/ui/tooltip'
 import {
   DEFAULT_ANCHOR,
@@ -1927,11 +1927,12 @@ export default function MapBuilder() {
             </p>
           )}
 
-          {/* 축척 바 + 배경 지도 저작권 */}
+          {/* 축척 바 + 나침반(캔버스 회전 연동) + 배경 지도 저작권 */}
           <div className="pointer-events-none absolute bottom-3 right-3 z-10 flex items-center gap-2 text-[10px] text-muted">
             {bg === 'map' && <span className="opacity-80">© OpenStreetMap · CARTO</span>}
             {bg === 'sat' && <span className="opacity-80">© Esri World Imagery</span>}
             <ScaleBar vb={vb} wrap={wrapRef.current} />
+            <Compass angle={rotation} size={24} />
           </div>
 
           {/* ── 플로팅 속성 창 ── */}

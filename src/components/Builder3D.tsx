@@ -16,6 +16,7 @@ import {
   tunnelSegment,
 } from './three-utils'
 import { FENCE_COLOR, shapeOutline, symbolDef, type BElement } from '../data/builder'
+import { Compass } from './TileLayer'
 
 /* ── 맵 빌더 3D 미리보기 ─────────────────────────────────────────────
  * 2D 캔버스에서 그린 요소를 실시간으로 볼륨 렌더링한다.
@@ -43,6 +44,7 @@ function levelBaseY(level: number): number {
 
 export default function Builder3D({ elements }: { elements: BElement[] }) {
   const hostRef = useRef<HTMLDivElement>(null)
+  const compassRef = useRef<SVGSVGElement>(null)
   const apiRef = useRef<{ group: THREE.Group; labelColor: string; pageColor: string } | null>(null)
 
   useEffect(() => {
@@ -99,6 +101,11 @@ export default function Builder3D({ elements }: { elements: BElement[] }) {
     const animate = () => {
       raf = requestAnimationFrame(animate)
       controls.update()
+      /* 나침반 — 카메라 방위각에 맞춰 북침 회전 */
+      if (compassRef.current)
+        compassRef.current.style.transform = `rotate(${THREE.MathUtils.radToDeg(
+          controls.getAzimuthalAngle(),
+        )}deg)`
       renderer.render(scene, camera)
     }
     animate()
@@ -311,5 +318,12 @@ export default function Builder3D({ elements }: { elements: BElement[] }) {
     }
   }, [elements])
 
-  return <div ref={hostRef} className="absolute inset-0" />
+  return (
+    <div ref={hostRef} className="absolute inset-0">
+      {/* 나침반 — 우하단, 카메라 방위각 연동 (붉은 침 = 북) */}
+      <div className="pointer-events-none absolute bottom-3 right-3 z-10">
+        <Compass size={26} svgRef={compassRef} />
+      </div>
+    </div>
+  )
 }

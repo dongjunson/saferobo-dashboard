@@ -33,7 +33,7 @@ import {
   type Zone,
 } from '../data/site'
 import { useSiteModel, type SiteModel } from '../data/siteModel'
-import TileLayer, { ScaleBar, type BgKind, type ViewBox } from './TileLayer'
+import TileLayer, { Compass, ScaleBar, type BgKind, type ViewBox } from './TileLayer'
 /* three.js 번들은 3D 모드 진입 시에만 로드 */
 const Site3D = lazy(() => import('./Site3D'))
 
@@ -209,6 +209,12 @@ function zoneEllipse(z: Zone) {
 
 /* ── 줌/팬 viewBox 연산 ───────────────────────────────────────────── */
 const BASE: ViewBox = { x: 0, y: 0, w: 1000, h: 640 }
+
+/** 회전각 정규화 (-180..180, ≈0은 0) */
+const normDeg = (v: number) => {
+  const n = ((v + 540) % 360) - 180
+  return Math.abs(n) < 0.01 ? 0 : n
+}
 const MIN_W = 140
 const MAX_W = 8000 // 광역(주변 지역)까지 줌아웃 허용 (~12.5%)
 
@@ -238,6 +244,7 @@ const StaticLayers = memo(function StaticLayers({
   model,
   floor,
   k,
+  rot = 0,
   showGrid = true,
   show,
   onZoneOpen,
@@ -245,18 +252,17 @@ const StaticLayers = memo(function StaticLayers({
   model: SiteModel
   floor: FloorId
   k: number
+  /** 도면 회전각 — 라벨/마커는 역회전으로 수평 유지 */
+  rot?: number
   showGrid?: boolean
   show: Record<LayerKey, boolean>
   onZoneOpen: (name: string) => void
 }) {
+  const counterRot = (x: number, y: number) => (rot ? `rotate(${-rot} ${x} ${y})` : undefined)
   const { zones, gateways, mapBeacons, gasDetectors, stairwells, rooms, utilityTunnels, zoneRisk } =
     model
   const tunnelEntrances = model.tunnelEntrances
   const layers = useMemo(() => {
-    const gridLines: string[] = []
-    for (let gx = 0; gx <= 1000; gx += 80) gridLines.push(toStr([[gx, 0], [gx, 640]]))
-    for (let gy = 0; gy <= 640; gy += 80) gridLines.push(toStr([[0, gy], [1000, gy]]))
-
     /* 선택 층의 평면도만 표시 */
     const zs = zones
       .filter((z) => z.floors.includes(floor))
@@ -282,7 +288,7 @@ const StaticLayers = memo(function StaticLayers({
     /* 지오펜스·기타 설비 — 맵 빌더 제작 요소, 선택 층만 */
     const fences = model.geofences.filter((f) => f.floor === floor)
     const fcs = model.facilities.filter((f) => f.floor === floor)
-    return { gridLines, zs, bs, gs, gds, tns, tl, stairs, rms, fences, fcs }
+    return { zs, bs, gs, gds, tns, tl, stairs, rms, fences, fcs }
   }, [floor, model, zones, gateways, mapBeacons, gasDetectors, stairwells, rooms, utilityTunnels, zoneRisk])
 
   const fontSize = Math.max(6, Math.min(14, 12 * k))
@@ -296,10 +302,17 @@ const StaticLayers = memo(function StaticLayers({
   }
   return (
     <>
-      {showGrid &&
-        layers.gridLines.map((pts, i) => (
-          <polyline key={i} points={pts} fill="none" stroke="var(--grid-line)" strokeWidth="0.6" vectorEffect="non-scaling-stroke" />
-        ))}
+      {/* 무한 그리드 — 경계 없이 뷰포트(줌아웃·팬·회전 포함)를 항상 덮는 대형 패턴 면 */}
+      {showGrid && (
+        <>
+          <defs>
+            <pattern id="dash-inf-grid" width={80} height={80} patternUnits="userSpaceOnUse">
+              <path d="M 80 0 L 0 0 0 80" fill="none" stroke="var(--grid-line)" strokeWidth="0.6" />
+            </pattern>
+          </defs>
+          <rect x={-12000} y={-12000} width={25000} height={25000} fill="url(#dash-inf-grid)" />
+        </>
+      )}
       {/* 지하 공동구 — 몸체는 불투명 스트로크를 그룹에 모아 그룹 opacity로 합성:
        * 분기·코너에서 라인이 겹쳐도 색이 진해지지 않는다. */}
       {show.tunnels && layers.tns.length > 0 && (
@@ -344,6 +357,7 @@ const StaticLayers = memo(function StaticLayers({
           fill="var(--series-1)"
           opacity="0.85"
           fontWeight="600"
+          transform={counterRot(layers.tl.x, layers.tl.y)}
         >
           지하 공동구
         </text>
@@ -382,24 +396,26 @@ const StaticLayers = memo(function StaticLayers({
                 {zoneAnim}
               </polygon>
             )}
-            <text x={z.labelX} y={z.labelY} textAnchor="middle" fontSize={fontSize} fill="var(--text-muted)" fontWeight="500">
-              {z.name}
-            </text>
-            {z.risk !== 'good' && (
-              <text
-                x={z.labelX}
-                y={z.labelY + fontSize + 2}
-                textAnchor="middle"
-                fontSize={fontSize * 0.85}
-                fill={zc}
-                fontWeight="700"
-                paintOrder="stroke"
-                stroke="var(--page)"
-                strokeWidth="2.5"
-              >
-                {RISK_LABEL[z.risk]}
+            <g transform={counterRot(z.labelX, z.labelY)}>
+              <text x={z.labelX} y={z.labelY} textAnchor="middle" fontSize={fontSize} fill="var(--text-muted)" fontWeight="500">
+                {z.name}
               </text>
-            )}
+              {z.risk !== 'good' && (
+                <text
+                  x={z.labelX}
+                  y={z.labelY + fontSize + 2}
+                  textAnchor="middle"
+                  fontSize={fontSize * 0.85}
+                  fill={zc}
+                  fontWeight="700"
+                  paintOrder="stroke"
+                  stroke="var(--page)"
+                  strokeWidth="2.5"
+                >
+                  {RISK_LABEL[z.risk]}
+                </text>
+              )}
+            </g>
           </g>
         )
       })}
@@ -453,6 +469,7 @@ const StaticLayers = memo(function StaticLayers({
             paintOrder="stroke"
             stroke="var(--page)"
             strokeWidth="2"
+            transform={counterRot(f.x + 6, f.y + 13)}
           >
             {f.name}
           </text>
@@ -480,6 +497,7 @@ const StaticLayers = memo(function StaticLayers({
             paintOrder="stroke"
             stroke="var(--page)"
             strokeWidth="2"
+            transform={counterRot(r.labelX, r.ly)}
           >
             {r.name}
           </text>
@@ -488,7 +506,7 @@ const StaticLayers = memo(function StaticLayers({
       {show.beacons && showDevices && layers.bs.map((b) => (
         <g
           key={b.id}
-          transform={`translate(${b.x}, ${b.y}) scale(${km})`}
+          transform={`translate(${b.x}, ${b.y}) scale(${km})${rot ? ` rotate(${-rot})` : ''}`}
           style={{ cursor: 'pointer' }}
           onClick={(e) => openZone(e, b.zone)}
         >
@@ -501,7 +519,7 @@ const StaticLayers = memo(function StaticLayers({
       {show.gateways && showDevices && layers.gs.map((g) => (
         <g
           key={g.id}
-          transform={`translate(${g.x}, ${g.y}) scale(${km})`}
+          transform={`translate(${g.x}, ${g.y}) scale(${km})${rot ? ` rotate(${-rot})` : ''}`}
           style={{ cursor: 'pointer' }}
           onClick={(e) => openZone(e, g.zone)}
         >
@@ -516,7 +534,7 @@ const StaticLayers = memo(function StaticLayers({
       {show.gas && showDevices && layers.gds.map((g) => (
         <g
           key={g.id}
-          transform={`translate(${g.x}, ${g.y}) scale(${km})`}
+          transform={`translate(${g.x}, ${g.y}) scale(${km})${rot ? ` rotate(${-rot})` : ''}`}
           style={{ cursor: 'pointer' }}
           onClick={(e) => openZone(e, g.zone)}
         >
@@ -548,7 +566,7 @@ const StaticLayers = memo(function StaticLayers({
       ))}
       {/* 기타 설비(맵 빌더 심볼) — 출입구는 도면식 문 심볼, 그 외 코드 칩 */}
       {show.facilities && showDevices && layers.fcs.map((f) => (
-        <g key={f.id} transform={`translate(${f.x}, ${f.y}) scale(${km})`}>
+        <g key={f.id} transform={`translate(${f.x}, ${f.y}) scale(${km})${rot && f.type !== 'door' ? ` rotate(${-rot})` : ''}`}>
           <title>{`${f.name} · ${f.label}`}</title>
           {f.type === 'door' ? (
             /* 출입구 — 벽 개구부 심볼 (문지방 + 양측 문설주, 방향성 없음) */
@@ -571,7 +589,7 @@ const StaticLayers = memo(function StaticLayers({
       {show.tunnels && showDevices && tunnelEntrances.map((e) => (
         <g
           key={e.id}
-          transform={`translate(${e.x}, ${e.y}) scale(${km})`}
+          transform={`translate(${e.x}, ${e.y}) scale(${km})${rot ? ` rotate(${-rot})` : ''}`}
           style={{ cursor: 'pointer' }}
           onClick={(ev) => openZone(ev, e.zone)}
         >
@@ -689,12 +707,15 @@ function WorkerLayer({
   tick,
   floor,
   k,
+  rot = 0,
   selectedId,
   onSelect,
 }: {
   tick: number
   floor: FloorId
   k: number
+  /** 도면 회전각 — 이름 라벨은 역회전으로 수평 유지 */
+  rot?: number
   selectedId: number | null
   onSelect: (id: number) => void
 }) {
@@ -764,6 +785,7 @@ function WorkerLayer({
                       paintOrder="stroke"
                       stroke="var(--page)"
                       strokeWidth="3"
+                      transform={rot ? `rotate(${-rot} 0 19)` : undefined}
                     >
                       {w.name}
                     </text>
@@ -1385,6 +1407,8 @@ export default function SiteMap() {
   const [bg, setBg] = useState<BgKind>('none')
   const [full, setFull] = useState(false)
   const [vb, setVb] = useState<ViewBox>(BASE)
+  /* 도면 회전 — 맵 빌더에서 설정한 각도가 기본값, Shift+드래그로 조절 */
+  const [mapRot, setMapRot] = useState(() => model.rotation)
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [detailZone, setDetailZone] = useState<string | null>(null)
   const [legendOpen, setLegendOpen] = useState(false)
@@ -1402,6 +1426,13 @@ export default function SiteMap() {
     y0: 0,
     vb0: BASE,
     active: false,
+    moved: false,
+  })
+  /* Shift+드래그 회전 — 캔버스 중심(500,320) 기준 포인터 각도 추적 */
+  const rotRef = useRef<{ active: boolean; startAngle: number; startRot: number; moved: boolean }>({
+    active: false,
+    startAngle: 0,
+    startRot: 0,
     moved: false,
   })
 
@@ -1442,12 +1473,30 @@ export default function SiteMap() {
       return order[Math.min(order.length - 1, Math.max(0, order.indexOf(f) + dir))]
     })
 
+  const pointerAngle = (e: React.PointerEvent): number => {
+    const rect = wrapRef.current!.getBoundingClientRect()
+    const [px, py] = clientToVb(e.clientX, e.clientY, rect, vbRef.current)
+    return (Math.atan2(py - 320, px - 500) * 180) / Math.PI
+  }
+
   const onPointerDown = (e: React.PointerEvent) => {
+    /* Shift+드래그 — 도면 회전 (텍스트·마커는 수평 유지) */
+    if (e.shiftKey && wrapRef.current) {
+      rotRef.current = { active: true, startAngle: pointerAngle(e), startRot: mapRot, moved: false }
+      ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+      return
+    }
     panRef.current = { x0: e.clientX, y0: e.clientY, vb0: vbRef.current, active: true, moved: false }
     /* 주의: 여기서 setPointerCapture를 걸면 click이 래퍼로 리타게팅되어
      * 구역(건물)·작업자 클릭이 무시된다 — 캡처는 드래그 확정 시점에 건다 */
   }
   const onPointerMove = (e: React.PointerEvent) => {
+    const r = rotRef.current
+    if (r.active && wrapRef.current) {
+      r.moved = true
+      setMapRot(normDeg(Math.round(r.startRot + pointerAngle(e) - r.startAngle)))
+      return
+    }
     const p = panRef.current
     if (!p.active || !wrapRef.current) return
     const dx = e.clientX - p.x0
@@ -1463,6 +1512,7 @@ export default function SiteMap() {
   }
   const onPointerUp = () => {
     panRef.current.active = false
+    rotRef.current.active = false
   }
 
   const tracking = liveWorkers.filter((w) => !w.outTime).length
@@ -1598,11 +1648,11 @@ export default function SiteMap() {
         onPointerUp={mode === '3d' ? undefined : onPointerUp}
         onPointerCancel={mode === '3d' ? undefined : onPointerUp}
         onClickCapture={(e) => {
-          /* 드래그 팬 직후의 클릭은 구역 상세/선택 해제로 이어지지 않게 차단 */
-          if (mode !== '3d' && panRef.current.moved) e.stopPropagation()
+          /* 드래그 팬·회전 직후의 클릭은 구역 상세/선택 해제로 이어지지 않게 차단 */
+          if (mode !== '3d' && (panRef.current.moved || rotRef.current.moved)) e.stopPropagation()
         }}
         onClick={() => {
-          if (mode !== '3d' && !panRef.current.moved) setSelectedId(null)
+          if (mode !== '3d' && !panRef.current.moved && !rotRef.current.moved) setSelectedId(null)
         }}
       >
         {mode !== '3d' ? (
@@ -1612,23 +1662,37 @@ export default function SiteMap() {
             role="img"
             aria-label="현장 실시간 위치 지도"
           >
-            {mode === '2d' && bg !== 'none' && (
-              <TileLayer vb={vb} kind={bg} screenW={wrapRef.current?.clientWidth ?? 900} anchor={model.anchor} />
-            )}
-            <StaticLayers
-              model={model}
-              floor={floor}
-              k={k}
-              showGrid={bg === 'none'}
-              show={layersOn}
-              onZoneOpen={setDetailZone}
-            />
-            {layersOn.workers && selected && !selected.outTime && workerFloor(selected) === floor && (
-              <Trail worker={selected} tick={tick} />
-            )}
-            {layersOn.workers && (
-              <WorkerLayer tick={tick} floor={floor} k={k} selectedId={selectedId} onSelect={setSelectedId} />
-            )}
+            {/* 회전 그룹 — 타일·도면·작업자 전부 함께 회전 (라벨은 내부 역회전) */}
+            <g transform={mapRot ? `rotate(${mapRot} 500 320)` : undefined}>
+              {mode === '2d' && bg !== 'none' && (
+                <TileLayer
+                  /* 회전 시 모서리 공백이 없도록 타일 범위를 여유 있게 확장 */
+                  vb={
+                    mapRot
+                      ? { x: vb.x - vb.w * 0.25, y: vb.y - vb.h * 0.25, w: vb.w * 1.5, h: vb.h * 1.5 }
+                      : vb
+                  }
+                  kind={bg}
+                  screenW={wrapRef.current?.clientWidth ?? 900}
+                  anchor={model.anchor}
+                />
+              )}
+              <StaticLayers
+                model={model}
+                floor={floor}
+                k={k}
+                rot={mapRot}
+                showGrid={bg === 'none'}
+                show={layersOn}
+                onZoneOpen={setDetailZone}
+              />
+              {layersOn.workers && selected && !selected.outTime && workerFloor(selected) === floor && (
+                <Trail worker={selected} tick={tick} />
+              )}
+              {layersOn.workers && (
+                <WorkerLayer tick={tick} floor={floor} k={k} rot={mapRot} selectedId={selectedId} onSelect={setSelectedId} />
+              )}
+            </g>
           </svg>
         ) : (
           /* three.js 3D 뷰 — OrbitControls 회전·줌·팬 */
@@ -1670,7 +1734,7 @@ export default function SiteMap() {
             {[
               { icon: <Plus size={15} />, label: '줌인', fn: () => zoomCenter(0.75) },
               { icon: <Minus size={15} />, label: '줌아웃', fn: () => zoomCenter(1.33) },
-              { icon: <LocateFixed size={14} />, label: '초기화', fn: () => setVb(BASE) },
+              { icon: <LocateFixed size={14} />, label: '초기화', fn: () => { setVb(BASE); setMapRot(model.rotation) } },
             ].map((b) => (
               <button
                 key={b.label}
@@ -1743,7 +1807,7 @@ export default function SiteMap() {
                 ))}
               </ul>
               <p className="mt-1 border-t border-hairline px-1 pt-1.5 text-[10px] leading-relaxed text-muted">
-                {mode === '3d' ? '드래그 회전 · 휠 줌 · 건물 클릭 → 상세' : '건물 클릭 → 상세 보기'}
+                {mode === '3d' ? '드래그 회전 · 휠 줌 · 건물 클릭 → 상세' : '건물 클릭 → 상세 · Shift+드래그: 회전'}
               </p>
             </div>
           ) : (
@@ -1762,6 +1826,7 @@ export default function SiteMap() {
           {mode === '2d' && bg === 'map' && <span className="opacity-80">© OpenStreetMap · CARTO</span>}
           {mode === '2d' && bg === 'sat' && <span className="opacity-80">© Esri World Imagery</span>}
           {mode === '2d' && <ScaleBar vb={vb} wrap={wrapRef.current} />}
+          {mode === '2d' && <Compass size={24} angle={mapRot} />}
         </div>
       </div>
 
