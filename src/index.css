@@ -10,12 +10,12 @@
 
 /* ---------------------------------------------------------------
  * SafeRobo Design System 토큰 적용
- *  - 다크 모드 기본 (#0f172a 캔버스 · #1e293b 카드 · #3b82f6 프라이머리)
- *  - 라이트 모드는 DS 라이트 토큰 기반 폴백
+ *  - 다크 모드 고정 (#0f172a 캔버스 · #1e293b 카드 · #3b82f6 프라이머리)
  *  - 차트는 DS chart 팔레트(--chart-1~5), 상태색은 intent 팔레트
  * ------------------------------------------------------------- */
 :root,
 [data-theme="dark"] {
+  color-scheme: dark;
   --page: #0f172a;
   --surface-1: #1e293b;
   --surface-2: #334155;
@@ -42,33 +42,6 @@
   --status-critical: #f87171;
 
   --delta-good: #34d399;
-}
-
-[data-theme="light"] {
-  --page: #f1f5f9;
-  --surface-1: #ffffff;
-  --surface-2: #f1f5f9;
-  --text-primary: #0f172a;
-  --text-secondary: #334155;
-  --text-muted: #64748b;
-  --grid-line: #e2e8f0;
-  --axis-line: #cbd5e1;
-  --hairline: rgba(15, 23, 42, 0.08);
-  --primary: #3b82f6;
-
-  --series-1: #2563eb;
-  --series-2: #059669;
-  --series-3: #d97706;
-  --series-4: #7c3aed;
-  --series-5: #db2777;
-  --series-6: #dc2626;
-
-  --status-good: #16a34a;
-  --status-warning: #d97706;
-  --status-serious: #ea580c;
-  --status-critical: #dc2626;
-
-  --delta-good: #16a34a;
 }
 
 @theme inline {

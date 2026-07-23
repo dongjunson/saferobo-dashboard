@@ -15,10 +15,10 @@ const WORLD = 40075016.686
 const R_MERC = 6378137
 export const M_PER_UNIT = 1.25
 
-function tileUrl(kind: BgKind, z: number, x: number, y: number, light: boolean) {
+function tileUrl(kind: BgKind, z: number, x: number, y: number) {
   if (kind === 'sat')
     return `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`
-  const style = light ? 'light_all' : 'dark_all'
+  const style = 'dark_all'
   return `https://${'abcd'[(x + y) % 4]}.basemaps.cartocdn.com/${style}/${z}/${x}/${y}.png`
 }
 
@@ -65,7 +65,6 @@ export default function TileLayer({
   /** 캔버스 중심(500,320)이 매핑되는 위경도 */
   anchor: { lat: number; lng: number }
 }) {
-  const light = document.documentElement.dataset.theme === 'light'
   const ax = (R_MERC * anchor.lng * Math.PI) / 180
   const ay = R_MERC * Math.log(Math.tan(Math.PI / 4 + (anchor.lat * Math.PI) / 360))
   const res = (vb.w * M_PER_UNIT) / screenW // 화면 px당 미터
@@ -88,7 +87,7 @@ export default function TileLayer({
       const mercYtop = WORLD / 2 - ty * ts
       tiles.push({
         key: `${z}/${tx}/${ty}`,
-        href: tileUrl(kind, z, tx, ty, light),
+        href: tileUrl(kind, z, tx, ty),
         x: 500 + (mercX - ax) / M_PER_UNIT,
         y: 320 + (ay - mercYtop) / M_PER_UNIT,
         s: ts / M_PER_UNIT,

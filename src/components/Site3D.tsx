@@ -563,7 +563,7 @@ export default function Site3D({
       layerObjsRef.current = null
       camApiRef.current = null
     }
-    // 테마 전환 시에는 지도 재진입으로 색을 다시 읽는다 — 목업 수준에서 허용
+    // 현장 모델이나 포커스 구역이 바뀌면 다크 테마 토큰을 다시 읽어 장면을 구성한다.
   }, [focusZone, model])
 
   /* 카메라 보기 프리셋 — 위에서/옆에서/꽉차게/기본 */

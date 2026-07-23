@@ -7,11 +7,9 @@ import {
   Droplets,
   LayoutDashboard,
   Map as MapIcon,
-  Moon,
   PanelLeftClose,
   PanelLeftOpen,
   Radio,
-  Sun,
   Users,
   Wind,
 } from 'lucide-react'
@@ -87,8 +85,8 @@ function HeaderClock() {
   )
 }
 
-/* SafeRobo DS: 사이드바는 라이트 모드에서도 다크 틴트 유지.
- * open=false면 아이콘 전용 레일로 접힌다 (토글 상태는 localStorage 보존) */
+/* SafeRobo DS: 다크 사이드바. open=false면 아이콘 전용 레일로 접힌다
+ * (토글 상태는 localStorage 보존). */
 function Sidebar({ open, onToggle }: { open: boolean; onToggle: () => void }) {
   return (
     <aside
@@ -170,18 +168,10 @@ function Sidebar({ open, onToggle }: { open: boolean; onToggle: () => void }) {
 }
 
 export default function Layout() {
-  const [theme, setTheme] = useState<'dark' | 'light'>(
-    () => (localStorage.getItem('theme') as 'dark' | 'light') ?? 'dark',
-  )
   const [navOpen, setNavOpen] = useState(() => localStorage.getItem('nav-open') !== '0')
   const location = useLocation()
   const [title, subtitle] = PAGE_META[location.pathname] ?? ['', '']
   const w = siteInfo.weather
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme
-    localStorage.setItem('theme', theme)
-  }, [theme])
 
   const toggleNav = () =>
     setNavOpen((v) => {
@@ -232,13 +222,6 @@ export default function Layout() {
             >
               <Bell size={20} />
               <span className="absolute top-1.5 right-1.5 h-2.5 w-2.5 rounded-full border-2 border-surface-1 bg-critical" />
-            </button>
-            <button
-              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-              className="flex h-12 w-12 cursor-pointer items-center justify-center rounded-[14px] text-muted transition-colors hover:bg-surface-2 hover:text-ink"
-              aria-label="테마 전환"
-            >
-              {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
             </button>
           </div>
         </header>
