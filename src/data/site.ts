@@ -20,12 +20,13 @@ export const siteInfo = {
 
 /* ── 층(레벨) 정의 — 지상층 / 지하 1층 / 지하 2층 ──────────────────
  * 2D는 층 선택 뷰, 2.5D는 여러 층의 2D 평면을 하나의 스택으로 표현한다. */
-export type FloorId = 'F1' | 'B1' | 'B2'
+export type FloorId = 'F1' | 'B1' | 'B2' | 'B3'
 
 export const floorDefs: Array<{ id: FloorId; name: string; short: string }> = [
   { id: 'F1', name: '지상층', short: '지상' },
   { id: 'B1', name: '지하 1층', short: '지하1' },
   { id: 'B2', name: '지하 2층', short: '지하2' },
+  { id: 'B3', name: '지하 3층', short: '지하3' },
 ]
 
 /* ── 지도: 구역(폴리곤)·게이트웨이·고정형 비콘 ────────────────────── */

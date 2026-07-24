@@ -2691,7 +2691,32 @@ export default function MapBuilder() {
                       <input className={INPUT_CLS} value={selected.name} onChange={(e) => patchEl(selected.id, { name: e.target.value })} />
                     </Field>
                     <Field label="적용 층">
-                      <Select className={SELECT_CLS} value={selected.level} onChange={(e) => patchEl(selected.id, { level: Number(e.target.value) })}>
+                      <Select
+                        className={SELECT_CLS}
+                        value={selected.level}
+                        onChange={(e) => {
+                          /* 층 변경 — 소속 비콘·장애물도 함께 이동 (소속·층 일치 규칙 유지) */
+                          const lv = Number(e.target.value)
+                          setElements((prev) =>
+                            prev.map((x) => {
+                              if (x.id === selected.id) return { ...x, level: lv } as BElement
+                              if (
+                                x.kind === 'symbol' &&
+                                x.type === 'beacon' &&
+                                (x.fenceId === selected.id || pointInShape(selected, x.x, x.y))
+                              )
+                                return { ...x, level: lv, fenceId: selected.id } as BElement
+                              if (
+                                x.kind === 'obstacle' &&
+                                (x.fenceId === selected.id ||
+                                  pointInShape(selected, x.x + x.w / 2, x.y + x.h / 2))
+                              )
+                                return { ...x, level: lv } as BElement
+                              return x
+                            }),
+                          )
+                        }}
+                      >
                         {(levelOpts.includes(selected.level) ? levelOpts : [...levelOpts, selected.level]).map((lv) => (
                           <option key={lv} value={lv}>{levelName(lv)}</option>
                         ))}
@@ -2705,7 +2730,8 @@ export default function MapBuilder() {
                       {selected.rot ? ` · 회전 ${selected.rot}°` : ''}
                     </p>
                     <p className="text-[11px] leading-relaxed text-muted">
-                      지오펜스는 층에 귀속되는 가상 감시 경계입니다. 위험 등급은 관제 실데이터에서
+                      지오펜스는 층에 귀속되는 가상 감시 경계입니다. 층을 바꾸면 소속
+                      비콘·장애물(구조물)도 함께 이동합니다. 위험 등급은 관제 실데이터에서
                       동적으로 판정되며, 비콘은 지오펜스 내부에만 배치할 수 있습니다.
                     </p>
                   </div>

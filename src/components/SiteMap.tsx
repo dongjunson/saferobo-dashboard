@@ -41,7 +41,7 @@ const Site3D = lazy(() => import('./Site3D'))
 /** 지도 모드 — SVG 2D 평면도 + three.js 3D */
 type MapMode = '2d' | '3d'
 
-const LV_ORDER: Record<FloorId, number> = { B2: 0, B1: 1, F1: 2 }
+const LV_ORDER: Record<FloorId, number> = { B3: 0, B2: 1, B1: 2, F1: 3 }
 const FLOOR_SHORT = Object.fromEntries(floorDefs.map((f) => [f.id, f.short])) as Record<FloorId, string>
 
 /** 일반 설비는 설치 층에만, 엘리베이터는 시작~종료 사이 모든 층에 표시한다. */

@@ -6,7 +6,12 @@ import { M_PER_UNIT } from './TileLayer'
  * three 좌표(X=x, Z=y, Y=고도)로 매핑하는 규약을 공유한다. */
 
 export const FLOOR_H = 25 // 층고 (시각화용 과장 스케일)
-export const LEVEL_Y: Record<FloorId, number> = { F1: 0, B1: -FLOOR_H, B2: -FLOOR_H * 2 }
+export const LEVEL_Y: Record<FloorId, number> = {
+  F1: 0,
+  B1: -FLOOR_H,
+  B2: -FLOOR_H * 2,
+  B3: -FLOOR_H * 3,
+}
 
 /** 고정형 가스검침기 커버리지 반경 (실측 m) */
 export const GAS_COVERAGE_M = 15

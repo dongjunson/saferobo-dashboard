@@ -119,9 +119,9 @@ export interface SiteModel {
   zoneRisk: Map<string, ZoneRisk>
 }
 
-/** 빌더 층 번호(1=지상1층, -1=지하1층) → 대시보드 층 */
+/** 빌더 층 번호(1=지상1층, -1=지하1층) → 대시보드 층 — 지하는 B3까지 지원(그 이하는 B3로 캡) */
 function levelToFloor(level: number): FloorId {
-  return level >= 1 ? 'F1' : level === -1 ? 'B1' : 'B2'
+  return level >= 1 ? 'F1' : level === -1 ? 'B1' : level === -2 ? 'B2' : 'B3'
 }
 
 /** id 기반 결정적 의사난수 0~1 — 빌더 가스검침기의 목업 측정값 생성용 */
@@ -170,6 +170,7 @@ export function resolveSiteModel(): SiteModel {
     if (b.floorsUp >= 1) floors.push('F1')
     if (b.floorsDown >= 1) floors.push('B1')
     if (b.floorsDown >= 2) floors.push('B2')
+    if (b.floorsDown >= 3) floors.push('B3')
     if (floors.length === 0) floors.push('F1')
     /* poly·회전 오브젝트는 외곽선을 폴리곤으로 굽고, 그 외에는 원시 형태 유지 */
     const asPoly = b.shape === 'poly' || (b.rot ?? 0) !== 0
