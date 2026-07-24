@@ -6,6 +6,7 @@ import {
   beaconModel,
   cssColor,
   doorModel,
+  elevatorShaft,
   entranceShaft,
   gasDetectorModel,
   gatewayModel,
@@ -14,8 +15,9 @@ import {
   textSprite,
   tunnelMaterials,
   tunnelSegment,
+  updateElevatorCars,
 } from './three-utils'
-import { FENCE_COLOR, shapeOutline, symbolDef, type BElement } from '../data/builder'
+import { FENCE_COLOR, pointInShape, shapeOutline, symbolDef, type BElement } from '../data/builder'
 import { Compass } from './TileLayer'
 
 /* ── 맵 빌더 3D 미리보기 ─────────────────────────────────────────────
@@ -100,6 +102,7 @@ export default function Builder3D({ elements }: { elements: BElement[] }) {
     let raf = 0
     const animate = () => {
       raf = requestAnimationFrame(animate)
+      updateElevatorCars(scene, performance.now() / 1000)
       controls.update()
       /* 나침반 — 카메라 방위각에 맞춰 북침 회전 */
       if (compassRef.current)
@@ -274,7 +277,15 @@ export default function Builder3D({ elements }: { elements: BElement[] }) {
           group.add(grp)
         } else if (el.type === 'gateway') {
           const grp = gatewayModel()
-          grp.position.set(el.x, baseY, el.y)
+          /* 옥상 설치 — 소속 건물의 지상 최상단 위에 배치 */
+          let gy = baseY
+          if (el.roof) {
+            const host = elements.find(
+              (b) => b.kind === 'building' && pointInShape(b, el.x, el.y),
+            )
+            if (host && host.kind === 'building') gy = host.floorsUp * FLOOR_H
+          }
+          grp.position.set(el.x, gy, el.y)
           group.add(grp)
         } else if (el.type === 'gas') {
           const grp = gasDetectorModel('#f59e0b')
@@ -288,6 +299,18 @@ export default function Builder3D({ elements }: { elements: BElement[] }) {
             levelBaseY(Math.max(el.level, to)),
           )
           grp.scale.x = (el.width ?? 34) / 34
+          grp.rotation.y = (-(el.rot ?? 0) * Math.PI) / 180
+          grp.position.set(el.x, 0, el.y)
+          group.add(grp)
+        } else if (el.type === 'elevator') {
+          /* 시작~종료 층 샤프트 · 폭×깊이·회전 반영 */
+          const to = el.toLevel ?? el.level
+          const grp = elevatorShaft(
+            el.width ?? 16,
+            el.depth ?? 16,
+            levelBaseY(Math.min(el.level, to)),
+            levelBaseY(Math.max(el.level, to)),
+          )
           grp.rotation.y = (-(el.rot ?? 0) * Math.PI) / 180
           grp.position.set(el.x, 0, el.y)
           group.add(grp)

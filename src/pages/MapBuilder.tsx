@@ -7,6 +7,7 @@ import {
   Building2,
   ChevronDown,
   ChevronUp,
+  ChevronsUpDown,
   Circle,
   DoorOpen,
   Eraser,
@@ -14,6 +15,7 @@ import {
   FileDown,
   Gauge,
   LocateFixed,
+  Lock,
   LogOut,
   MapPin,
   Minus,
@@ -28,6 +30,7 @@ import {
   Square,
   Trash2,
   Undo2,
+  Unlock,
   Waypoints,
   Wifi,
   X,
@@ -40,12 +43,14 @@ import {
   DEFAULT_ANCHOR,
   FENCE_COLOR,
   SYMBOL_DEFS,
+  SYMBOL_GROUPS,
   levelName,
   levelShort,
   loadBuilderMap,
   polyPath,
   ptsBBox,
   sampleMap,
+  samplePolyline,
   saveBuilderMap,
   shapeOutline,
   symbolDef,
@@ -79,6 +84,7 @@ const SYMBOL_ICON: Record<SymbolType, ReactNode> = {
   gas: <Gauge size={14} />,
   door: <DoorOpen size={14} />,
   stairs: <ArrowUpDown size={14} />,
+  elevator: <ChevronsUpDown size={14} />,
   entrance: <ArrowDownToLine size={14} />,
 }
 
@@ -108,7 +114,19 @@ type Drag =
     }
   | { mode: 'resize'; id: string; ax: number; ay: number; orig: BElement; before: BElement[]; moved: boolean }
   | { mode: 'vertex'; id: string; index: number; before: BElement[] | null; moved: boolean; rot: number; cx: number; cy: number }
-  | { mode: 'rotobj'; id: string; cx: number; cy: number; startAngle: number; startRot: number; before: BElement[]; moved: boolean }
+  | { mode: 'tunvertex'; id: string; index: number; before: BElement[] | null; moved: boolean }
+  | {
+      mode: 'rotobj'
+      id: string
+      cx: number
+      cy: number
+      startAngle: number
+      startRot: number
+      before: BElement[]
+      moved: boolean
+      /** 건물·지오펜스 회전 시 함께 회전할 소속 요소 스냅샷 */
+      children?: Array<{ id: string; orig: BElement }>
+    }
   | { mode: 'pan'; cx: number; cy: number; vb0: ViewBox }
   | { mode: 'rotate'; startAngle: number; startRot: number }
 
@@ -227,6 +245,7 @@ export default function MapBuilder() {
   const [curveMode, setCurveMode] = useState(false)
   const [levelFilter, setLevelFilter] = useState<LevelFilter>('all')
   const [show3D, setShow3D] = useState(true)
+  const [protectedEdit, setProtectedEdit] = useState(false)
   const [bg, setBg] = useState<BgKind>('none')
   const [anchorOpen, setAnchorOpen] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(true)
@@ -324,6 +343,13 @@ export default function MapBuilder() {
   const passLevel = (lv: number) => levelFilter === 'all' || lv === levelFilter
   const defaultLevel = () => (typeof levelFilter === 'number' ? levelFilter : 1)
 
+  /** 보호 편집 모드에서 변경 가능한 요소 — 지오펜스와 비콘만 허용한다. */
+  const isProtectedEditable = (el: BElement | null | undefined) =>
+    !!el && (el.kind === 'fence' || (el.kind === 'symbol' && el.type === 'beacon'))
+
+  const editCursor = (el: BElement) =>
+    tool === 'select' ? (protectedEdit && !isProtectedEditable(el) ? 'not-allowed' : 'move') : undefined
+
   /** 심볼이 놓인 소속 건물 — 층 선택지는 그 건물의 층 구성에 귀속된다 */
   const buildingAt = (x: number, y: number): BBuilding | undefined =>
     buildings.find((b) => pointInShape(b, x, y))
@@ -354,12 +380,26 @@ export default function MapBuilder() {
   }
   const undo = () => {
     if (!history.length) return
+    if (protectedEdit) {
+      const lockedNow = elements.filter((e) => !isProtectedEditable(e))
+      const lockedThen = history[history.length - 1].filter((e) => !isProtectedEditable(e))
+      if (JSON.stringify(lockedNow) !== JSON.stringify(lockedThen)) {
+        showNotice('보호 편집 모드에서는 건물·작업영역·공동구·일반 설비 변경을 되돌릴 수 없습니다')
+        return
+      }
+    }
     setElements(history[history.length - 1])
     setHistory(history.slice(0, -1))
     setSelectedId(null)
   }
   const patchEl = (id: string, patch: Partial<BElement>) =>
-    setElements((prev) => prev.map((e) => (e.id === id ? ({ ...e, ...patch } as BElement) : e)))
+    setElements((prev) =>
+      prev.map((e) =>
+        e.id === id && (!protectedEdit || isProtectedEditable(e))
+          ? ({ ...e, ...patch } as BElement)
+          : e,
+      ),
+    )
 
   /** 상단 안내 배너 — 배치 제약 등 일시 피드백 */
   const showNotice = (msg: string) => {
@@ -371,6 +411,10 @@ export default function MapBuilder() {
   const deleteSelected = () => {
     if (!selectedId) return
     const target = elements.find((e) => e.id === selectedId)
+    if (protectedEdit && !isProtectedEditable(target)) {
+      showNotice('보호 편집 모드에서는 지오펜스와 비콘만 삭제할 수 있습니다')
+      return
+    }
     commit(
       elements.filter((e) => {
         if (e.id === selectedId) return false
@@ -403,29 +447,70 @@ export default function MapBuilder() {
     return (Math.atan2(y - CY, x - CX) * 180) / Math.PI
   }
 
-  /** 계단 발자국(폭×27, 회전 반영)이 소속 건물 벽 안쪽에 머물도록 중심 좌표 클램프 —
-   * 건물 밖 배치는 자유, 건물 안이면 벽면과 겹치지 않게 밀어 넣는다 */
+  /** 발자국(폭×깊이, 회전 반영)이 소속 건물 벽 안쪽에 머물도록 중심 좌표 클램프 —
+   * 건물 밖 배치는 자유, 건물 안이면 벽면과 겹치지 않게 밀어 넣는다.
+   * 계단(기본 깊이 27)·엘리베이터(폭×깊이) 공용 */
   const clampStairPos = (
     list: BElement[],
     st: { width?: number; rot?: number },
     nx: number,
     ny: number,
+    footprintDepth = 27,
   ): [number, number] => {
-    const b = list.find(
-      (e): e is BBuilding =>
-        e.kind === 'building' && nx >= e.x && nx <= e.x + e.w && ny >= e.y && ny <= e.y + e.h,
-    )
-    if (!b) return [nx, ny]
-    const w = st.width ?? 34
-    const rad = ((st.rot ?? 0) * Math.PI) / 180
-    const c = Math.abs(Math.cos(rad))
-    const s = Math.abs(Math.sin(rad))
-    const hw = (c * w + s * 27) / 2 + 2
-    const hh = (s * w + c * 27) / 2 + 2
-    return [
-      hw * 2 > b.w ? b.x + b.w / 2 : Math.max(b.x + hw, Math.min(b.x + b.w - hw, nx)),
-      hh * 2 > b.h ? b.y + b.h / 2 : Math.max(b.y + hh, Math.min(b.y + b.h - hh, ny)),
-    ]
+    for (const b of list) {
+      if (b.kind !== 'building') continue
+      /* 회전 건물 지원 — 건물 로컬 좌표(회전 해제)로 변환해 판정·클램프 후 되돌린다 */
+      const bcx = b.x + b.w / 2
+      const bcy = b.y + b.h / 2
+      const brad = ((b.rot ?? 0) * Math.PI) / 180
+      const cosB = Math.cos(brad)
+      const sinB = Math.sin(brad)
+      const lx = bcx + (nx - bcx) * cosB + (ny - bcy) * sinB
+      const ly = bcy - (nx - bcx) * sinB + (ny - bcy) * cosB
+      if (lx < b.x || lx > b.x + b.w || ly < b.y || ly > b.y + b.h) continue
+      const w = st.width ?? 34
+      /* 발자국 각도는 건물 기준 상대각으로 */
+      const rad = (((st.rot ?? 0) - (b.rot ?? 0)) * Math.PI) / 180
+      const c = Math.abs(Math.cos(rad))
+      const s = Math.abs(Math.sin(rad))
+      const hw = (c * w + s * footprintDepth) / 2 + 2
+      const hh = (s * w + c * footprintDepth) / 2 + 2
+      const cx2 = hw * 2 > b.w ? bcx : Math.max(b.x + hw, Math.min(b.x + b.w - hw, lx))
+      const cy2 = hh * 2 > b.h ? bcy : Math.max(b.y + hh, Math.min(b.y + b.h - hh, ly))
+      return [
+        +(bcx + (cx2 - bcx) * cosB - (cy2 - bcy) * sinB).toFixed(1),
+        +(bcy + (cx2 - bcx) * sinB + (cy2 - bcy) * cosB).toFixed(1),
+      ]
+    }
+    return [nx, ny]
+  }
+
+  /** 공동구 출입구를 가장 가까운 공동구 라인 위 지점에 스냅 —
+   * 라인 근처(폭/2+12)가 아니면 자유 배치. 스냅 시 공동구의 층을 따른다 */
+  const snapEntranceToTunnel = (
+    list: BElement[],
+    nx: number,
+    ny: number,
+  ): { x: number; y: number; level?: number } => {
+    let best: { d: number; x: number; y: number; level: number } | null = null
+    for (const t of list) {
+      if (t.kind !== 'tunnel') continue
+      const th = (t.width ?? 18) / 2 + 12
+      for (let i = 0; i < t.path.length - 1; i++) {
+        const [x1, y1] = t.path[i]
+        const [x2, y2] = t.path[i + 1]
+        const dx = x2 - x1
+        const dy = y2 - y1
+        const len2 = dx * dx + dy * dy
+        const tt = len2 ? Math.max(0, Math.min(1, ((nx - x1) * dx + (ny - y1) * dy) / len2)) : 0
+        const px = x1 + tt * dx
+        const py = y1 + tt * dy
+        const d = Math.hypot(nx - px, ny - py)
+        if (d <= th && (!best || d < best.d))
+          best = { d, x: +px.toFixed(1), y: +py.toFixed(1), level: t.level }
+      }
+    }
+    return best ? { x: best.x, y: best.y, level: best.level } : { x: nx, y: ny }
   }
 
   /** 출입구를 가장 가까운 건물 벽면에 스냅 — 직각/타원/다각형(곡선 포함)/회전 건물 공통.
@@ -497,6 +582,20 @@ export default function MapBuilder() {
     setDraft(null)
     setDraftPts([])
     setHoverPt(null)
+  }
+
+  const toggleProtectedEdit = () => {
+    const next = !protectedEdit
+    setProtectedEdit(next)
+    setTool('select')
+    cancelDraft()
+    dragRef.current = null
+    if (next && !isProtectedEditable(selected)) setSelectedId(null)
+    showNotice(
+      next
+        ? '보호 편집 모드 ON — 지오펜스와 비콘만 편집할 수 있습니다'
+        : '보호 편집 모드 OFF — 모든 맵 요소를 편집할 수 있습니다',
+    )
   }
 
   const finalizeDraftPts = () => {
@@ -583,43 +682,80 @@ export default function MapBuilder() {
   const onElementDown = (e: React.PointerEvent, el: BElement) => {
     if (tool !== 'select' || e.button !== 0 || e.shiftKey) return
     e.stopPropagation()
+    if (protectedEdit && !isProtectedEditable(el)) {
+      showNotice('잠긴 요소입니다 — 보호 편집 모드에서는 지오펜스와 비콘만 편집할 수 있습니다')
+      return
+    }
     svgRef.current?.setPointerCapture(e.pointerId)
     setSelectedId(el.id)
     const [mx, my] = toMap(e.clientX, e.clientY)
-    /* 건물이면 내부(심볼·작업영역), 지오펜스면 소속 비콘을 함께 이동하도록 스냅샷 */
-    const children =
-      el.kind === 'building'
+    dragRef.current = {
+      mode: 'move', id: el.id, sx: mx, sy: my, orig: el, before: elements, moved: false,
+      children: collectChildren(el),
+    }
+  }
+
+  /** 건물이면 내부(심볼·작업영역), 지오펜스면 소속 비콘, 공동구면 접한 심볼 스냅샷 —
+   * 이동·회전 동반용 */
+  const collectChildren = (el: BElement): Array<{ id: string; orig: BElement }> | undefined =>
+    el.kind === 'building'
+      ? elements
+          .filter((c) => {
+            if (c.id === el.id) return false
+            const px = c.kind === 'symbol' ? c.x : c.kind === 'room' ? c.x + c.w / 2 : null
+            const py = c.kind === 'symbol' ? c.y : c.kind === 'room' ? c.y + c.h / 2 : null
+            /* 회전·타원·다각형 건물도 실제 외곽선 기준으로 내부 판정 */
+            return px !== null && py !== null && pointInShape(el, px, py)
+          })
+          .map((c) => ({ id: c.id, orig: c }))
+      : el.kind === 'fence'
         ? elements
-            .filter((c) => {
-              if (c.id === el.id) return false
-              const px = c.kind === 'symbol' ? c.x : c.kind === 'room' ? c.x + c.w / 2 : null
-              const py = c.kind === 'symbol' ? c.y : c.kind === 'room' ? c.y + c.h / 2 : null
-              return (
-                px !== null && py !== null &&
-                px >= el.x && px <= el.x + el.w && py >= el.y && py <= el.y + el.h
-              )
-            })
+            .filter(
+              (c) =>
+                c.kind === 'symbol' &&
+                c.type === 'beacon' &&
+                (c.fenceId === el.id || pointInShape(el, c.x, c.y)),
+            )
             .map((c) => ({ id: c.id, orig: c }))
-        : el.kind === 'fence'
+        : el.kind === 'tunnel'
           ? elements
               .filter(
                 (c) =>
                   c.kind === 'symbol' &&
-                  c.type === 'beacon' &&
-                  (c.fenceId === el.id || pointInShape(el, c.x, c.y)),
+                  (c.type === 'beacon' || c.type === 'entrance') &&
+                  distToPolyline(el.path, c.x, c.y) <= (el.width ?? 18) / 2 + 6,
               )
               .map((c) => ({ id: c.id, orig: c }))
-          : el.kind === 'tunnel'
-            ? elements
-                .filter(
-                  (c) =>
-                    c.kind === 'symbol' &&
-                    (c.type === 'beacon' || c.type === 'entrance') &&
-                    distToPolyline(el.path, c.x, c.y) <= (el.width ?? 18) / 2 + 6,
-                )
-                .map((c) => ({ id: c.id, orig: c }))
-            : undefined
-    dragRef.current = { mode: 'move', id: el.id, sx: mx, sy: my, orig: el, before: elements, moved: false, children }
+          : undefined
+
+  /** 소속 요소 동반 회전 — 중심(cx,cy) 기준 위치 공전 + 방향성 요소는 자체 회전각 가산.
+   * 강체 회전: 자기 중심을 공전시키고 같은 각도만큼 자체 회전하면 전체가 함께 도는 것과 동일 */
+  const rotateChildEl = (c: BElement, delta: number, cx: number, cy: number): BElement => {
+    const rad = (delta * Math.PI) / 180
+    const cos = Math.cos(rad)
+    const sin = Math.sin(rad)
+    const orbit = (px: number, py: number): [number, number] => [
+      +(cx + (px - cx) * cos - (py - cy) * sin).toFixed(1),
+      +(cy + (px - cx) * sin + (py - cy) * cos).toFixed(1),
+    ]
+    if (c.kind === 'symbol') {
+      const [nx, ny] = orbit(c.x, c.y)
+      if (c.type === 'stairs' || c.type === 'elevator' || c.type === 'door') {
+        const rot = normDeg(Math.round((c.rot ?? 0) + delta))
+        return { ...c, x: nx, y: ny, rot: rot === 0 ? undefined : rot }
+      }
+      return { ...c, x: nx, y: ny }
+    }
+    if (c.kind === 'room') {
+      const [ncx, ncy] = orbit(c.x + c.w / 2, c.y + c.h / 2)
+      const dx = ncx - (c.x + c.w / 2)
+      const dy = ncy - (c.y + c.h / 2)
+      const rot = normDeg(Math.round((c.rot ?? 0) + delta))
+      const patch: Partial<BRoom> = { x: c.x + dx, y: c.y + dy, rot: rot === 0 ? undefined : rot }
+      if (c.pts) patch.pts = c.pts.map((p) => ({ ...p, x: p.x + dx, y: p.y + dy }))
+      return { ...c, ...patch } as BElement
+    }
+    return c
   }
 
   const onHandleDown = (e: React.PointerEvent, el: BElement, cx: number, cy: number) => {
@@ -673,17 +809,46 @@ export default function MapBuilder() {
       )
       return
     }
+    if (d.mode === 'tunvertex') {
+      d.moved = true
+      const px = snap(mx)
+      const py = snap(my)
+      setElements((prev) =>
+        prev.map((el) => {
+          if (el.id !== d.id || el.kind !== 'tunnel') return el
+          const pts = tunBPts(el).map((p, i) => (i === d.index ? { ...p, x: px, y: py } : p))
+          return { ...el, bpts: pts, path: samplePolyline(pts) } as BElement
+        }),
+      )
+      return
+    }
     if (d.mode === 'rotobj') {
       d.moved = true
       const ang = (Math.atan2(my - d.cy, mx - d.cx) * 180) / Math.PI
       const next = normDeg(Math.round(d.startRot + ang - d.startAngle))
+      /* 각도 차는 mod 360이라 wrap돼도 기하학적으로 동일한 회전 */
+      const delta = next - d.startRot
       setElements((prev) =>
         prev.map((el) => {
-          if (el.id !== d.id) return el
+          if (el.id !== d.id) {
+            /* 건물·지오펜스 회전 — 소속 요소 동반 회전 (드래그 시작 스냅샷 기준) */
+            const ch = d.children?.find((c) => c.id === el.id)
+            return ch ? rotateChildEl(ch.orig, delta, d.cx, d.cy) : el
+          }
           const rot = next === 0 ? undefined : next
-          /* 계단은 회전 후에도 건물 벽과 겹치지 않게 위치 보정 */
+          /* 계단·엘리베이터는 회전 후에도 건물 벽과 겹치지 않게 위치 보정 */
           if (el.kind === 'symbol' && el.type === 'stairs') {
             const [cx2, cy2] = clampStairPos(prev, { ...el, rot }, el.x, el.y)
+            return { ...el, rot, x: cx2, y: cy2 } as BElement
+          }
+          if (el.kind === 'symbol' && el.type === 'elevator') {
+            const [cx2, cy2] = clampStairPos(
+              prev,
+              { width: el.width ?? 16, rot },
+              el.x,
+              el.y,
+              el.depth ?? 16,
+            )
             return { ...el, rot, x: cx2, y: cy2 } as BElement
           }
           return { ...el, rot } as BElement
@@ -730,6 +895,14 @@ export default function MapBuilder() {
             let sx2 = Math.max(X_MIN, Math.min(X_MAX, o.x + dx))
             let sy2 = Math.max(Y_MIN, Math.min(Y_MAX, o.y + dy))
             if (o.type === 'stairs') [sx2, sy2] = clampStairPos(prev, o, sx2, sy2)
+            if (o.type === 'elevator')
+              [sx2, sy2] = clampStairPos(
+                prev,
+                { width: o.width ?? 16, rot: o.rot },
+                sx2,
+                sy2,
+                o.depth ?? 16,
+              )
             if (o.type === 'door') {
               const r = snapDoorToWall(prev, o, sx2, sy2)
               return { ...el, x: r.x, y: r.y, rot: r.rot } as BElement
@@ -744,6 +917,21 @@ export default function MapBuilder() {
               if (o.fenceId) return el
               return { ...el, x: sx2, y: sy2 } as BElement
             }
+            if (o.type === 'entrance') {
+              /* 공동구 라인 근처면 라인 위로 스냅, 스냅 시 층도 공동구를 따른다 */
+              const r = snapEntranceToTunnel(prev, sx2, sy2)
+              return {
+                ...el,
+                x: r.x,
+                y: r.y,
+                ...(r.level != null ? { level: r.level } : null),
+              } as BElement
+            }
+            if (o.type === 'gateway' && o.roof) {
+              /* 옥상 설치 중계기가 건물 밖으로 나가면 옥상 해제 */
+              const inB = prev.some((b) => b.kind === 'building' && pointInShape(b, sx2, sy2))
+              return { ...el, x: sx2, y: sy2, ...(inB ? null : { roof: undefined }) } as BElement
+            }
             return { ...el, x: sx2, y: sy2 } as BElement
           }
           if (o.kind === 'tunnel') {
@@ -751,7 +939,11 @@ export default function MapBuilder() {
             const ys = o.path.map((p) => p[1])
             const cdx = Math.max(X_MIN - Math.min(...xs), Math.min(X_MAX - Math.max(...xs), dx))
             const cdy = Math.max(Y_MIN - Math.min(...ys), Math.min(Y_MAX - Math.max(...ys), dy))
-            return { ...el, path: o.path.map((p) => [p[0] + cdx, p[1] + cdy]) } as BElement
+            return {
+              ...el,
+              path: o.path.map((p) => [p[0] + cdx, p[1] + cdy]),
+              bpts: o.bpts?.map((p) => ({ ...p, x: p.x + cdx, y: p.y + cdy })),
+            } as BElement
           }
           const nx = Math.max(X_MIN, Math.min(X_MAX - o.w, o.x + dx))
           const ny = Math.max(Y_MIN, Math.min(Y_MAX - o.h, o.y + dy))
@@ -838,7 +1030,8 @@ export default function MapBuilder() {
       setDraft(null)
       setTool('select')
     } else if (
-      (d.mode === 'move' || d.mode === 'resize' || d.mode === 'vertex' || d.mode === 'rotobj') &&
+      (d.mode === 'move' || d.mode === 'resize' || d.mode === 'vertex' ||
+        d.mode === 'tunvertex' || d.mode === 'rotobj') &&
       d.moved
     ) {
       if (d.before) pushHistory(d.before)
@@ -889,14 +1082,62 @@ export default function MapBuilder() {
     }
   }
 
-  /* 회전 핸들 — 드래그: bbox 중심 기준 회전 · Alt+클릭: 0°로 초기화 */
+  /* ── 공동구 정점/곡선 편집 — bpts(곡선 플래그 포함)가 원본, path는 샘플 캐시 ── */
+  const tunBPts = (t: BTunnel): BPoint[] => t.bpts ?? t.path.map(([x, y]) => ({ x, y }))
+
+  const onTunVertexDown = (e: React.PointerEvent, t: BTunnel, index: number) => {
+    if (e.button !== 0 || e.shiftKey) return
+    e.stopPropagation()
+    const bpts = tunBPts(t)
+    if (e.altKey) {
+      /* 정점/제어점 삭제 — 최소 2점 유지 */
+      if (bpts.filter((p) => !p.c).length <= 2 && !bpts[index].c) return
+      const pts = bpts.filter((_, i) => i !== index)
+      commit(
+        elements.map((x) =>
+          x.id === t.id ? ({ ...x, bpts: pts, path: samplePolyline(pts) } as BElement) : x,
+        ),
+      )
+      return
+    }
+    svgRef.current?.setPointerCapture(e.pointerId)
+    dragRef.current = { mode: 'tunvertex', id: t.id, index, before: elements, moved: false }
+  }
+
+  const onTunEdgeDown = (e: React.PointerEvent, t: BTunnel, index: number) => {
+    if (e.button !== 0 || e.shiftKey || e.altKey) return
+    e.stopPropagation()
+    svgRef.current?.setPointerCapture(e.pointerId)
+    const pts = [...tunBPts(t)]
+    const a = pts[index]
+    const b = pts[index + 1]
+    pts.splice(index + 1, 0, { x: snap((a.x + b.x) / 2), y: snap((a.y + b.y) / 2), c: true })
+    pushHistory(elements)
+    setElements((prev) =>
+      prev.map((x) =>
+        x.id === t.id ? ({ ...x, bpts: pts, path: samplePolyline(pts) } as BElement) : x,
+      ),
+    )
+    /* 삽입 시점에 이미 히스토리를 쌓았으므로 이어지는 드래그는 추가 푸시 없음 */
+    dragRef.current = { mode: 'tunvertex', id: t.id, index: index + 1, before: null, moved: false }
+  }
+
+  /* 회전 핸들 — 드래그: bbox 중심 기준 회전 · Alt+클릭: 0°로 초기화.
+   * 건물·지오펜스는 소속 요소(심볼·작업영역·비콘)도 함께 회전 */
   const onRotObjDown = (e: React.PointerEvent, el: ShapedEl) => {
     if (e.button !== 0 || e.shiftKey) return
     e.stopPropagation()
     const cx = el.x + el.w / 2
     const cy = el.y + el.h / 2
+    const children = el.kind === 'building' || el.kind === 'fence' ? collectChildren(el) : undefined
     if (e.altKey) {
-      commit(elements.map((x) => (x.id === el.id ? ({ ...x, rot: undefined } as BElement) : x)))
+      const delta = -(el.rot ?? 0)
+      commit(
+        elements.map((x) => {
+          if (x.id === el.id) return { ...x, rot: undefined } as BElement
+          return children?.some((c) => c.id === x.id) ? rotateChildEl(x, delta, cx, cy) : x
+        }),
+      )
       return
     }
     svgRef.current?.setPointerCapture(e.pointerId)
@@ -910,6 +1151,7 @@ export default function MapBuilder() {
       startRot: el.rot ?? 0,
       before: elements,
       moved: false,
+      children,
     }
   }
 
@@ -940,6 +1182,10 @@ export default function MapBuilder() {
     e.preventDefault()
     const type = e.dataTransfer.getData('text/symbol') as SymbolType
     if (!SYMBOL_DEFS.some((s) => s.type === type)) return
+    if (protectedEdit && type !== 'beacon') {
+      showNotice('보호 편집 모드에서는 비콘만 새로 배치할 수 있습니다')
+      return
+    }
     const [mx, my] = toMap(e.clientX, e.clientY)
     const def = symbolDef(type)
     const n = symbols.filter((s) => s.kind === 'symbol' && s.type === type).length + 1
@@ -949,11 +1195,19 @@ export default function MapBuilder() {
     let doorRot: number | undefined
     let beaconFenceId: string | undefined
     if (type === 'stairs') [px, py] = clampStairPos(elements, { width: 34 }, px, py)
+    if (type === 'elevator') [px, py] = clampStairPos(elements, { width: 16 }, px, py, 16)
     if (type === 'door') {
       const r = snapDoorToWall(elements, { width: 12 }, px, py)
       px = r.x
       py = r.y
       doorRot = r.rot
+    }
+    if (type === 'entrance') {
+      /* 공동구 라인 스냅 — 스냅 시 층도 공동구를 따른다 */
+      const r = snapEntranceToTunnel(elements, px, py)
+      px = r.x
+      py = r.y
+      if (r.level != null) lv = r.level
     }
     if (type === 'beacon') {
       /* 비콘은 지오펜스 내부에만 배치 — 소속 지오펜스의 층을 따른다 */
@@ -980,6 +1234,13 @@ export default function MapBuilder() {
       const opts = levelOptsFor(hostB)
       stairTo = opts.find((o) => o < lv) ?? opts.find((o) => o !== lv) ?? stairTo
     }
+    /* 엘리베이터 — 소속 건물의 최상층~최하층 전 구간을 기본 연결 */
+    let evTo = lv > 0 ? -1 : 1
+    if (type === 'elevator' && hostB) {
+      const opts = levelOptsFor(hostB)
+      lv = opts[0]
+      evTo = opts[opts.length - 1]
+    }
     const el: BElement = {
       id: newId(),
       kind: 'symbol',
@@ -989,6 +1250,7 @@ export default function MapBuilder() {
       y: py,
       level: lv,
       ...(type === 'stairs' ? { toLevel: stairTo, width: 34 } : {}),
+      ...(type === 'elevator' ? { toLevel: evTo, width: 16, depth: 16 } : {}),
       ...(type === 'door' ? { width: 12, rot: doorRot } : {}),
       ...(type === 'beacon' ? { fenceId: beaconFenceId } : {}),
     }
@@ -1049,6 +1311,8 @@ export default function MapBuilder() {
       ? selected
       : null
   const shapedPoly = shaped && shaped.shape === 'poly' && shaped.pts ? shaped : null
+  /* 선택된 공동구 — 정점 이동/삭제 + 구간 중점 드래그로 곡선 */
+  const selTunnel: BTunnel | null = selected && selected.kind === 'tunnel' ? selected : null
 
   return (
     <TooltipProvider delayDuration={250}>
@@ -1059,22 +1323,37 @@ export default function MapBuilder() {
         <span className="mr-1 text-base font-bold tracking-tight">맵 빌더</span>
         <div className="mx-1 h-6 w-px bg-hairline" />
         {/* 대상 — 무엇을 그릴지 */}
-        {TARGETS.map((t) => (
-          <Tip key={t.k} label={t.label}>
+        {TARGETS.map((t) => {
+          const lockedTool = protectedEdit && t.k !== 'select' && t.k !== 'fence'
+          const tipLabel = lockedTool
+            ? `잠긴 도구 — 보호 편집 모드에서는 지오펜스 생성과 비콘 배치·편집만 가능합니다 · ${t.label}`
+            : t.label
+          return (
+          <Tip key={t.k} label={tipLabel}>
             <button
-              aria-label={t.label}
+              aria-label={tipLabel}
+              aria-disabled={lockedTool}
               onClick={() => {
+                if (lockedTool) {
+                  showNotice('보호 편집 모드에서는 지오펜스와 비콘만 편집할 수 있습니다')
+                  return
+                }
                 setTool(t.k)
                 cancelDraft()
               }}
               className={`flex size-9 cursor-pointer items-center justify-center rounded-lg transition-colors ${
-                tool === t.k ? 'bg-primary text-white' : 'text-ink-2 hover:bg-surface-2 hover:text-ink'
+                lockedTool
+                  ? 'cursor-not-allowed text-muted opacity-35'
+                  : tool === t.k
+                    ? 'bg-primary text-white'
+                    : 'text-ink-2 hover:bg-surface-2 hover:text-ink'
               }`}
             >
               {t.icon}
             </button>
           </Tip>
-        ))}
+          )
+        })}
         {/* 형태 — 어떤 모양으로 (건물·작업영역·지오펜스 공통) */}
         {shapedTool && (
           <>
@@ -1118,29 +1397,39 @@ export default function MapBuilder() {
             <Undo2 size={16} />
           </button>
         </Tip>
-        <Tip label="군포 하수도 사업소 배치 불러오기">
+        <Tip label={protectedEdit ? '잠긴 기능 — 전체 배치 불러오기는 보호 편집 모드를 해제한 뒤 사용할 수 있습니다' : '군포 하수도 사업소 배치 불러오기'}>
           <button
-            aria-label="사업소 불러오기"
+            aria-label={protectedEdit ? '사업소 불러오기 잠김' : '사업소 불러오기'}
+            aria-disabled={protectedEdit}
             onClick={() => {
+              if (protectedEdit) {
+                showNotice('전체 배치 불러오기는 보호 편집 모드를 해제한 뒤 사용할 수 있습니다')
+                return
+              }
               const s = sampleMap()
               commit(s.elements)
               setAnchor(s.anchor)
               setRotation(s.rotation)
               setSelectedId(null)
             }}
-            className={ICON_BTN}
+            className={`${ICON_BTN} ${protectedEdit ? 'cursor-not-allowed opacity-35' : ''}`}
           >
             <FileDown size={16} />
           </button>
         </Tip>
-        <Tip label="전체 지우기">
+        <Tip label={protectedEdit ? '잠긴 기능 — 전체 지우기는 보호 편집 모드를 해제한 뒤 사용할 수 있습니다' : '전체 지우기'}>
           <button
-            aria-label="전체 지우기"
+            aria-label={protectedEdit ? '전체 지우기 잠김' : '전체 지우기'}
+            aria-disabled={protectedEdit}
             onClick={() => {
+              if (protectedEdit) {
+                showNotice('전체 지우기는 보호 편집 모드를 해제한 뒤 사용할 수 있습니다')
+                return
+              }
               commit([])
               setSelectedId(null)
             }}
-            className={ICON_BTN}
+            className={`${ICON_BTN} ${protectedEdit ? 'cursor-not-allowed opacity-35' : ''}`}
           >
             <Eraser size={16} />
           </button>
@@ -1330,7 +1619,7 @@ export default function MapBuilder() {
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       opacity={sel ? 0.32 : 0.16}
-                      style={{ cursor: tool === 'select' ? 'move' : undefined }}
+                      style={{ cursor: editCursor(el) }}
                       onPointerDown={(e) => onElementDown(e, el)}
                     >
                       <title>{`${el.name} · ${levelName(el.level)}`}</title>
@@ -1345,10 +1634,14 @@ export default function MapBuilder() {
                       opacity="0.8"
                       pointerEvents="none"
                     />
+                    {/* 경유점 도트는 원본 포인트(bpts) 기준 — 곡선 샘플점은 표시하지 않음.
+                     * 편집 핸들(정점·곡선)이 오버레이로 따로 그려지므로 여기선 비제어점만 */}
                     {sel &&
-                      el.path.map((p, i) => (
-                        <circle key={i} cx={p[0]} cy={p[1]} r="3" fill="var(--surface-1)" stroke="var(--primary)" strokeWidth="1.5" pointerEvents="none" />
-                      ))}
+                      tunBPts(el)
+                        .filter((p) => !p.c)
+                        .map((p, i) => (
+                          <circle key={i} cx={p.x} cy={p.y} r="3" fill="var(--surface-1)" stroke="var(--primary)" strokeWidth="1.5" pointerEvents="none" />
+                        ))}
                     <text
                       x={mid[0]}
                       y={mid[1] - 7}
@@ -1377,7 +1670,7 @@ export default function MapBuilder() {
                   fillOpacity: 0.13,
                   stroke: sel ? 'var(--primary)' : '#8b5cf6',
                   strokeWidth: sel ? 2 : 1.5,
-                  style: { cursor: tool === 'select' ? 'move' : undefined },
+                  style: { cursor: editCursor(el) },
                   onPointerDown: (e: React.PointerEvent) => onElementDown(e, el),
                 }
                 return (
@@ -1418,7 +1711,7 @@ export default function MapBuilder() {
                   strokeOpacity: sel ? 1 : 0.75,
                   strokeWidth: sel ? 1.6 : 1,
                   strokeDasharray: '3 3',
-                  style: { cursor: tool === 'select' ? 'move' : undefined },
+                  style: { cursor: editCursor(el) },
                   onPointerDown: (e: React.PointerEvent) => onElementDown(e, el),
                 } as const
                 const roomTitle = <title>{`${el.name} · 작업영역 · ${levelName(el.level)}`}</title>
@@ -1461,7 +1754,7 @@ export default function MapBuilder() {
                   stroke: sel ? 'var(--primary)' : FENCE_COLOR,
                   strokeWidth: sel ? 2 : 1.5,
                   strokeDasharray: '6 4',
-                  style: { cursor: tool === 'select' ? 'move' : undefined },
+                  style: { cursor: editCursor(el) },
                   onPointerDown: (e: React.PointerEvent) => onElementDown(e, el),
                 }
                 return (
@@ -1511,7 +1804,7 @@ export default function MapBuilder() {
                     <g
                       key={el.id}
                       transform={`translate(${el.x},${el.y})`}
-                      style={{ cursor: tool === 'select' ? 'move' : undefined }}
+                      style={{ cursor: editCursor(el) }}
                       onPointerDown={(e) => onElementDown(e, el)}
                     >
                       <title>{`${el.name} 계단실 · ${levelName(from)} → ${levelName(to)} (${down ? '하행' : to > from ? '상행' : '동일 층'}) · 폭 ${w}${sRot ? ` · 회전 ${sRot}°` : ''}`}</title>
@@ -1578,6 +1871,67 @@ export default function MapBuilder() {
                     </g>
                   )
                 }
+                /* 엘리베이터 — 샤프트 평면 심볼(사각 + X 대각선), 폭×깊이 실측 표현.
+                 * 시작~종료 층 구간에 걸치면 해당 층 필터에서 표시 */
+                if (el.type === 'elevator') {
+                  const from = el.level
+                  const to = el.toLevel ?? from
+                  const lo = Math.min(from, to)
+                  const hi = Math.max(from, to)
+                  if (levelFilter !== 'all' && (levelFilter < lo || levelFilter > hi)) return null
+                  const ew = Math.max(8, el.width ?? 16)
+                  const ed = Math.max(8, el.depth ?? 16)
+                  const evRot = el.rot ?? 0
+                  const badge = ed / 2 + 9
+                  return (
+                    <g
+                      key={el.id}
+                      transform={`translate(${el.x},${el.y})`}
+                      style={{ cursor: editCursor(el) }}
+                      onPointerDown={(e) => onElementDown(e, el)}
+                    >
+                      <title>{`${el.name} 엘리베이터 · ${levelName(hi)} ↔ ${levelName(lo)} · ${ew}×${ed}${evRot ? ` · 회전 ${evRot}°` : ''}`}</title>
+                      {/* 몸체 — 오브젝트 회전을 따라 지오메트리처럼 회전 */}
+                      <g transform={evRot ? `rotate(${evRot})` : undefined}>
+                        {sel && (
+                          <rect x={-ew / 2 - 3.5} y={-ed / 2 - 3.5} width={ew + 7} height={ed + 7} rx={3} fill="none" stroke="var(--primary)" strokeWidth={1.5} />
+                        )}
+                        <rect x={-ew / 2} y={-ed / 2} width={ew} height={ed} rx={1.5} fill="#f472b6" fillOpacity="0.12" stroke="#f472b6" strokeWidth="1.4" />
+                        <line x1={-ew / 2} y1={-ed / 2} x2={ew / 2} y2={ed / 2} stroke="#f472b6" strokeWidth="1" pointerEvents="none" />
+                        <line x1={-ew / 2} y1={ed / 2} x2={ew / 2} y2={-ed / 2} stroke="#f472b6" strokeWidth="1" pointerEvents="none" />
+                        {/* 회전 핸들 — 우측 하단 */}
+                        {sel && (
+                          <>
+                            <line x1={ew / 2 + 2} y1={ed / 2 + 2} x2={ew / 2 + 8} y2={ed / 2 + 8} stroke="var(--primary)" strokeWidth="1" strokeDasharray="2 2" opacity="0.6" pointerEvents="none" />
+                            <g
+                              transform={`translate(${ew / 2 + 12} ${ed / 2 + 12})`}
+                              style={{ cursor: 'grab' }}
+                              onPointerDown={(e) => onRotSymDown(e, el)}
+                            >
+                              <circle r="6" fill="var(--surface-1)" stroke="var(--primary)" strokeWidth="1.5">
+                                <title>{`회전 핸들 — 드래그: 회전 (현재 ${evRot}°) · Alt+클릭: 0°`}</title>
+                              </circle>
+                              <path d="M -2.4,-1.1 A 2.7,2.7 0 1 1 -2.4,1.9" fill="none" stroke="var(--primary)" strokeWidth="1.1" pointerEvents="none" />
+                              <path d="M -3.7,0.9 L -2.4,1.9 L -1.2,0.8" fill="none" stroke="var(--primary)" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" pointerEvents="none" />
+                            </g>
+                          </>
+                        )}
+                      </g>
+                      {levelFilter === 'all' && (
+                        <text
+                          y={badge}
+                          textAnchor="middle"
+                          fontSize={6}
+                          fill="var(--text-muted)"
+                          pointerEvents="none"
+                          transform={rotation ? `rotate(${-rotation} 0 ${badge})` : undefined}
+                        >
+                          {levelShort(hi)}↕{levelShort(lo)}
+                        </text>
+                      )}
+                    </g>
+                  )
+                }
                 if (!passLevel(el.level)) return null
                 const d = symbolDef(el.type)
                 /* 출입구 — 벽 개구부 심볼(문지방 + 양측 문설주). 방향성 없음,
@@ -1592,7 +1946,7 @@ export default function MapBuilder() {
                       key={el.id}
                       transform={`translate(${el.x},${el.y})`}
                       opacity={el.level < 0 ? 0.8 : 1}
-                      style={{ cursor: tool === 'select' ? 'move' : undefined }}
+                      style={{ cursor: editCursor(el) }}
                       onPointerDown={(e) => onElementDown(e, el)}
                     >
                       <title>{`${el.name} · 출입구 · ${levelName(el.level)} · 폭 ${w}`}</title>
@@ -1684,15 +2038,21 @@ export default function MapBuilder() {
                     key={el.id}
                     transform={`translate(${el.x},${el.y})${rotation ? ` rotate(${-rotation})` : ''}`}
                     opacity={el.level < 0 ? 0.8 : 1}
-                    style={{ cursor: tool === 'select' ? 'move' : undefined }}
+                    style={{ cursor: editCursor(el) }}
                     onPointerDown={(e) => onElementDown(e, el)}
                   >
-                    <title>{`${el.name} · ${d.label} · ${levelName(el.level)}`}</title>
+                    <title>{`${el.name} · ${d.label} · ${el.roof ? '옥상' : levelName(el.level)}`}</title>
                     {glyph}
-                    {el.level !== 1 && (
-                      <text y={badgeY} textAnchor="middle" fontSize={6} fill="var(--text-muted)" pointerEvents="none">
-                        {levelShort(el.level)}
+                    {el.roof ? (
+                      <text y={badgeY} textAnchor="middle" fontSize={6} fontWeight={700} fill={d.color} pointerEvents="none">
+                        옥상
                       </text>
+                    ) : (
+                      el.level !== 1 && (
+                        <text y={badgeY} textAnchor="middle" fontSize={6} fill="var(--text-muted)" pointerEvents="none">
+                          {levelShort(el.level)}
+                        </text>
+                      )
                     )}
                   </g>
                 )
@@ -1866,8 +2226,83 @@ export default function MapBuilder() {
               </g>
               </g>
               )}
+              {/* 공동구 편집 핸들 — 정점 이동/삭제, 구간 중점 드래그 → 곡선 (다각형과 동일 UX) */}
+              {selTunnel && (() => {
+                const bp = tunBPts(selTunnel)
+                return (
+                  <g>
+                    {bp.map((p, i) => {
+                      const nxt = bp[i + 1]
+                      if (!nxt || p.c || nxt.c) return null
+                      return (
+                        <circle
+                          key={`te-${i}`}
+                          cx={(p.x + nxt.x) / 2}
+                          cy={(p.y + nxt.y) / 2}
+                          r="4"
+                          fill="var(--page)"
+                          fillOpacity="0.7"
+                          stroke="var(--primary)"
+                          strokeWidth="1.3"
+                          strokeDasharray="2 1.5"
+                          style={{ cursor: 'crosshair' }}
+                          onPointerDown={(e) => onTunEdgeDown(e, selTunnel, i)}
+                        >
+                          <title>드래그하여 이 구간을 곡선으로</title>
+                        </circle>
+                      )
+                    })}
+                    {bp.map((p, i) => (
+                      <rect
+                        key={`tv-${i}`}
+                        x={p.x - 4}
+                        y={p.y - 4}
+                        width={8}
+                        height={8}
+                        rx={p.c ? 4 : 1.5}
+                        fill={p.c ? 'var(--page)' : 'var(--surface-1)'}
+                        stroke="var(--primary)"
+                        strokeWidth={1.5}
+                        strokeDasharray={p.c ? '2 1.5' : undefined}
+                        style={{ cursor: 'move' }}
+                        onPointerDown={(e) => onTunVertexDown(e, selTunnel, i)}
+                      >
+                        <title>
+                          {p.c
+                            ? '곡선 제어점 — 드래그: 곡률 조절 · Alt+클릭: 직선으로'
+                            : '정점 — 드래그: 이동 · Alt+클릭: 삭제'}
+                        </title>
+                      </rect>
+                    ))}
+                  </g>
+                )
+              })()}
             </g>
           </svg>
+
+          {/* 보호 편집 모드 — 지도 구조물은 잠그고 지오펜스·비콘만 변경 */}
+          <Tip
+            label={
+              protectedEdit
+                ? '보호 편집 모드 사용 중 — 지오펜스 생성·변형·속성 편집과 비콘 배치·이동·속성 편집만 가능합니다 · 클릭하면 전체 편집 모드로 전환됩니다'
+                : '보호 편집 모드 켜기 — 건물·작업영역·공동구·일반 설비를 잠그고 지오펜스와 비콘만 안전하게 편집합니다'
+            }
+          >
+            <button
+              type="button"
+              aria-label={protectedEdit ? '보호 편집 모드 해제' : '보호 편집 모드 켜기'}
+              aria-pressed={protectedEdit}
+              onClick={toggleProtectedEdit}
+              className={`absolute right-3 top-3 z-30 flex h-9 cursor-pointer items-center gap-1.5 rounded-[10px] border px-3 text-xs font-semibold shadow-lg backdrop-blur transition-colors ${
+                protectedEdit
+                  ? 'border-primary/60 bg-primary text-white'
+                  : 'border-hairline bg-surface-1/90 text-ink-2 hover:bg-surface-2 hover:text-ink'
+              }`}
+            >
+              {protectedEdit ? <Lock size={14} /> : <Unlock size={14} />}
+              {protectedEdit ? '보호 편집 중' : '전체 편집'}
+            </button>
+          </Tip>
 
           {/* 층 필터 — 건물 층수 속성에서 유도 */}
           <div className="absolute left-3 top-3 z-10 flex gap-1 rounded-[10px] border border-hairline bg-surface-1/90 p-1 backdrop-blur">
@@ -1937,7 +2372,7 @@ export default function MapBuilder() {
 
           {/* ── 플로팅 속성 창 ── */}
           {selected && propsOpen && (
-            <div className="absolute right-3 top-3 z-20 flex max-h-[calc(100%-110px)] w-72 flex-col rounded-[14px] border border-hairline bg-surface-1/95 shadow-2xl backdrop-blur">
+            <div className="absolute right-3 top-14 z-20 flex max-h-[calc(100%-150px)] w-72 flex-col rounded-[14px] border border-hairline bg-surface-1/95 shadow-2xl backdrop-blur">
               <div className="flex shrink-0 items-center justify-between border-b border-hairline px-4 py-2.5">
                 <p className="text-xs font-bold text-ink">
                   속성
@@ -2111,7 +2546,12 @@ export default function MapBuilder() {
                         />
                       </Field>
                     </div>
-                    <p className="text-[11px] text-muted">경유점 {selected.path.length}개 · 드래그로 전체 이동 · 폭은 2D/3D·관제 지도에 반영</p>
+                    <p className="text-[11px] text-muted">
+                      경유점 {tunBPts(selected).filter((p) => !p.c).length}개
+                      {(selected.bpts?.some((p) => p.c) ?? false) &&
+                        ` · 곡선 ${selected.bpts!.filter((p) => p.c).length}구간`}
+                      {' '}· 구간 중점 드래그로 곡선 · 폭은 2D/3D·관제 지도에 반영
+                    </p>
                   </div>
                 )}
 
@@ -2190,6 +2630,115 @@ export default function MapBuilder() {
                           {' · '}
                           {levelName(selected.level)} → {levelName(selected.toLevel ?? -1)}
                           {selected.rot ? ` · 회전 ${selected.rot}°` : ''}
+                        </p>
+                      </>
+                    ) : selected.type === 'elevator' ? (
+                      <>
+                        <div className="grid grid-cols-2 gap-2">
+                          <Field label="시작 층">
+                            <select className={SELECT_CLS} value={selected.level} onChange={(e) => patchEl(selected.id, { level: Number(e.target.value) })}>
+                              {(symOpts.includes(selected.level) ? symOpts : [...symOpts, selected.level]).map((lv) => (
+                                <option key={lv} value={lv}>{levelName(lv)}</option>
+                              ))}
+                            </select>
+                          </Field>
+                          <Field label="종료 층">
+                            <select
+                              className={SELECT_CLS}
+                              value={selected.toLevel ?? selected.level}
+                              onChange={(e) => patchEl(selected.id, { toLevel: Number(e.target.value) })}
+                            >
+                              {(symOpts.includes(selected.toLevel ?? selected.level)
+                                ? symOpts
+                                : [...symOpts, selected.toLevel ?? selected.level]
+                              ).map((lv) => (
+                                <option key={lv} value={lv}>{levelName(lv)}</option>
+                              ))}
+                            </select>
+                          </Field>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <Field label="가로 폭">
+                            <input
+                              type="number"
+                              className={INPUT_CLS}
+                              value={selected.width ?? 16}
+                              min={8}
+                              max={60}
+                              step={2}
+                              onChange={(e) => {
+                                const v = Number(e.target.value)
+                                if (Number.isNaN(v)) return
+                                const nw = Math.max(8, Math.min(60, v))
+                                const [cx2, cy2] = clampStairPos(
+                                  elements,
+                                  { width: nw, rot: selected.rot },
+                                  selected.x,
+                                  selected.y,
+                                  selected.depth ?? 16,
+                                )
+                                patchEl(selected.id, { width: nw, x: cx2, y: cy2 })
+                              }}
+                            />
+                          </Field>
+                          <Field label="세로 깊이">
+                            <input
+                              type="number"
+                              className={INPUT_CLS}
+                              value={selected.depth ?? 16}
+                              min={8}
+                              max={60}
+                              step={2}
+                              onChange={(e) => {
+                                const v = Number(e.target.value)
+                                if (Number.isNaN(v)) return
+                                const nd = Math.max(8, Math.min(60, v))
+                                const [cx2, cy2] = clampStairPos(
+                                  elements,
+                                  { width: selected.width ?? 16, rot: selected.rot },
+                                  selected.x,
+                                  selected.y,
+                                  nd,
+                                )
+                                patchEl(selected.id, { depth: nd, x: cx2, y: cy2 })
+                              }}
+                            />
+                          </Field>
+                        </div>
+                        <p className="text-[11px] leading-relaxed text-muted">
+                          {levelName(Math.max(selected.level, selected.toLevel ?? selected.level))} ↔{' '}
+                          {levelName(Math.min(selected.level, selected.toLevel ?? selected.level))} 연결
+                          {' · '}샤프트 {selected.width ?? 16}×{selected.depth ?? 16}
+                          {selected.rot ? ` · 회전 ${selected.rot}°` : ''}
+                          <br />층 선택지는 소속 건물의 층 구성을 따르며, 벽면과 겹치지 않게 자동 보정됩니다.
+                        </p>
+                      </>
+                    ) : selected.type === 'gateway' ? (
+                      <>
+                        <Field label="설치 위치">
+                          <select
+                            className={SELECT_CLS}
+                            value={selected.roof ? 'roof' : String(selected.level)}
+                            onChange={(e) => {
+                              if (e.target.value === 'roof') {
+                                const b = buildingAt(selected.x, selected.y)
+                                patchEl(selected.id, {
+                                  roof: true,
+                                  level: b ? Math.max(1, b.floorsUp) : Math.max(1, selected.level),
+                                })
+                              } else patchEl(selected.id, { roof: undefined, level: Number(e.target.value) })
+                            }}
+                          >
+                            {(symOpts.includes(selected.level) ? symOpts : [...symOpts, selected.level]).map((lv) => (
+                              <option key={lv} value={String(lv)}>{levelName(lv)}</option>
+                            ))}
+                            {buildingAt(selected.x, selected.y) && <option value="roof">옥상</option>}
+                          </select>
+                        </Field>
+                        <p className="text-[11px] leading-relaxed text-muted">
+                          {selected.roof
+                            ? '건물 옥상 설치 — 3D에서 건물 상단에 표시되며, 건물 밖으로 이동하면 해제됩니다.'
+                            : '건물 내부에 배치하면 옥상 설치를 선택할 수 있습니다.'}
                         </p>
                       </>
                     ) : (
@@ -2275,7 +2824,7 @@ export default function MapBuilder() {
           {selected && !propsOpen && (
             <button
               onClick={() => setPropsOpen(true)}
-              className="absolute right-3 top-3 z-20 flex h-9 cursor-pointer items-center gap-1.5 rounded-[10px] border border-hairline bg-surface-1/90 px-3 text-xs font-semibold text-ink-2 backdrop-blur transition-colors hover:bg-surface-2 hover:text-ink"
+              className="absolute right-3 top-14 z-20 flex h-9 cursor-pointer items-center gap-1.5 rounded-[10px] border border-hairline bg-surface-1/90 px-3 text-xs font-semibold text-ink-2 backdrop-blur transition-colors hover:bg-surface-2 hover:text-ink"
             >
               속성 열기
             </button>
@@ -2287,7 +2836,7 @@ export default function MapBuilder() {
               paletteOpen ? 'translate-y-0 opacity-100' : 'pointer-events-none translate-y-10 opacity-0'
             }`}
           >
-            <div className="w-[min(94%,920px)] rounded-2xl border border-hairline bg-surface-1/95 px-4 pb-3 pt-2.5 shadow-2xl backdrop-blur">
+            <div className="w-[min(94%,960px)] rounded-2xl border border-hairline bg-surface-1/95 px-4 pb-4 pt-3 shadow-2xl backdrop-blur">
               <div className="flex items-center gap-3">
                 <span className="text-xs font-bold text-ink">심볼 팔레트</span>
                 <span className="hidden text-[10px] text-muted lg:block">캔버스로 드래그하여 배치</span>
@@ -2303,26 +2852,57 @@ export default function MapBuilder() {
                   <ChevronDown size={14} />
                 </button>
               </div>
-              {/* 가로 스크롤 없이 줄바꿈 — 패널이 세로로 늘어난다. 호버 리프트 여백 확보 */}
-              <div className="mt-1 flex flex-wrap justify-center gap-2 px-1 pb-1.5 pt-2">
-                {SYMBOL_DEFS.map((s) => (
-                  <div
-                    key={s.type}
-                    draggable
-                    onDragStart={(e) => e.dataTransfer.setData('text/symbol', s.type)}
-                    title={`${s.label} — 캔버스로 드래그하여 배치`}
-                    className="group flex w-[86px] shrink-0 cursor-grab flex-col items-center gap-1.5 rounded-xl border border-hairline bg-surface-2/40 px-2 pb-2 pt-2.5 transition-all duration-150 hover:-translate-y-0.5 hover:border-primary/50 hover:bg-surface-2 hover:shadow-md active:cursor-grabbing"
-                  >
-                    <span
-                      className="flex size-9 items-center justify-center rounded-[10px] text-white shadow-sm transition-transform duration-150 group-hover:scale-110"
-                      style={{ background: s.color }}
-                    >
-                      {SYMBOL_ICON[s.type]}
-                    </span>
-                    <p className="whitespace-nowrap text-[11px] font-medium leading-none text-ink">{s.label}</p>
-                    <span className="rounded-full bg-page/70 px-1.5 py-0.5 font-mono text-[8px] leading-none text-muted">
-                      {s.code}
-                    </span>
+              {/* 배치 대상별 그룹 — 가로 스크롤 없이 줄바꿈, 호버 리프트 여백 확보 */}
+              <div className="mt-1.5 flex flex-wrap justify-center gap-3 px-1 pb-1.5 pt-2">
+                {SYMBOL_GROUPS.map((g) => (
+                  <div key={g.key} className="rounded-xl border border-hairline/60 bg-page/30 px-3 pb-3 pt-2.5">
+                    <p className="mb-2.5 whitespace-nowrap px-0.5 text-xs leading-none text-muted">
+                      <span className="font-bold text-ink">{g.label}</span>
+                      <span className="opacity-90"> · {g.hint}</span>
+                    </p>
+                    <div className="flex flex-wrap justify-center gap-2">
+                      {SYMBOL_DEFS.filter((s) => s.group === g.key).map((s) => {
+                        const lockedSymbol = protectedEdit && s.type !== 'beacon'
+                        return (
+                        <Tip
+                          key={s.type}
+                          label={
+                            lockedSymbol
+                              ? `${s.label} 잠김 — 보호 편집 모드에서는 비콘만 새로 배치할 수 있습니다 · 잠금 버튼을 눌러 전체 편집 모드로 전환하세요`
+                              : `${s.label} — ${s.hint} · 캔버스로 드래그하여 배치`
+                          }
+                        >
+                        <div
+                          draggable={!lockedSymbol}
+                          aria-disabled={lockedSymbol}
+                          onDragStart={(e) => {
+                            if (lockedSymbol) {
+                              e.preventDefault()
+                              return
+                            }
+                            e.dataTransfer.setData('text/symbol', s.type)
+                          }}
+                          className={`group flex w-[86px] shrink-0 flex-col items-center gap-1.5 rounded-xl border border-hairline bg-surface-2/40 px-2 pb-2 pt-2.5 transition-all duration-150 ${
+                            lockedSymbol
+                              ? 'cursor-not-allowed opacity-35'
+                              : 'cursor-grab hover:-translate-y-0.5 hover:border-primary/50 hover:bg-surface-2 hover:shadow-md active:cursor-grabbing'
+                          }`}
+                        >
+                          <span
+                            className="flex size-9 items-center justify-center rounded-[10px] text-white shadow-sm transition-transform duration-150 group-hover:scale-110"
+                            style={{ background: s.color }}
+                          >
+                            {SYMBOL_ICON[s.type]}
+                          </span>
+                          <p className="whitespace-nowrap text-[11px] font-medium leading-none text-ink">{s.label}</p>
+                          <span className="rounded-full bg-page/70 px-1.5 py-0.5 font-mono text-[8px] leading-none text-muted">
+                            {s.code}
+                          </span>
+                        </div>
+                        </Tip>
+                        )
+                      })}
+                    </div>
                   </div>
                 ))}
               </div>

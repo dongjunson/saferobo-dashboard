@@ -16,6 +16,7 @@ import {
   beaconModel,
   cssColor,
   doorModel,
+  elevatorShaft,
   entranceShaft,
   gasDetectorModel,
   gatewayModel,
@@ -25,6 +26,7 @@ import {
   textSprite,
   tunnelMaterials,
   tunnelSegment,
+  updateElevatorCars,
 } from './three-utils'
 
 /* ── three.js 기반 3D 사업소 뷰 ──────────────────────────────────────
@@ -337,7 +339,11 @@ export default function Site3D({
     /* ── 계단실 — 설치된 건물에만(복수 개소 가능) ── */
     for (const s of stairwells) {
       if (focus && s.zone !== focus.name) continue
-      const grp = stairFlights(LEVEL_Y[s.toLevel])
+      const fromY = LEVEL_Y[s.fromLevel ?? 'F1']
+      const toY = LEVEL_Y[s.toLevel]
+      const grp = stairFlights(Math.min(fromY, toY), Math.max(fromY, toY))
+      grp.scale.x = (s.width ?? 34) / 34
+      grp.rotation.y = (-(s.rot ?? 0) * Math.PI) / 180
       grp.position.set(s.x, 0, s.y)
       scene.add(grp)
       layerObjs.stairs.push(grp)
@@ -380,14 +386,20 @@ export default function Site3D({
     for (const g of gateways) {
       if (focus && !inBox(g.x, g.y)) continue
       const grp = gatewayModel()
-      grp.position.set(g.x, 0, g.y)
+      /* 옥상 설치 — 소속 건물(zone)의 지상 최상단 위에 배치 */
+      let gy = LEVEL_Y[g.level ?? 'F1']
+      if (g.roof) {
+        const hz = zones.find((z) => z.name === g.zone)
+        if (hz) gy = (hz.upFloors ?? (hz.floors.includes('F1') ? 1 : 0)) * FLOOR_H
+      }
+      grp.position.set(g.x, gy, g.y)
       scene.add(grp)
       layerObjs.gateways.push(grp)
     }
     for (const g of gasDetectors) {
       if (focus && !inBox(g.x, g.y)) continue
       const grp = gasDetectorModel(col.gas[gasSeverity(g)])
-      grp.position.set(g.x, 0, g.y)
+      grp.position.set(g.x, LEVEL_Y[g.level ?? 'F1'], g.y)
       scene.add(grp)
       layerObjs.gas.push(grp)
     }
@@ -414,12 +426,25 @@ export default function Site3D({
       const marker: THREE.Object3D =
         fc.type === 'door'
           ? doorModel(fc.width ?? 12)
-          : new THREE.Mesh(
-              new THREE.BoxGeometry(5.5, 5.5, 5.5),
-              new THREE.MeshStandardMaterial({ color: fc.color, roughness: 0.5 }),
-            )
-      if (fc.type === 'door') marker.rotation.y = (-(fc.rot ?? 0) * Math.PI) / 180
-      marker.position.set(fc.x, fc.type === 'door' ? baseY : baseY + 2.8, fc.y)
+          : fc.type === 'elevator'
+            ? elevatorShaft(
+                fc.width ?? 16,
+                fc.depth ?? 16,
+                Math.min(LEVEL_Y[fc.floor], LEVEL_Y[fc.toFloor ?? fc.floor]),
+                Math.max(LEVEL_Y[fc.floor], LEVEL_Y[fc.toFloor ?? fc.floor]),
+              )
+            : new THREE.Mesh(
+                new THREE.BoxGeometry(5.5, 5.5, 5.5),
+                new THREE.MeshStandardMaterial({ color: fc.color, roughness: 0.5 }),
+              )
+      if (fc.type === 'door' || fc.type === 'elevator')
+        marker.rotation.y = (-(fc.rot ?? 0) * Math.PI) / 180
+      marker.position.set(
+        fc.x,
+        fc.type === 'door' || fc.type === 'elevator' ? 0 : baseY + 2.8,
+        fc.y,
+      )
+      if (fc.type === 'door') marker.position.y = baseY
       scene.add(marker)
       layerObjs.facilities.push(marker)
       /* 출입구는 형태로 식별 가능 — 이름 라벨 생략 (툴팁·2D에서 확인) */
@@ -528,6 +553,7 @@ export default function Site3D({
           ;(ring.material as THREE.MeshBasicMaterial).opacity = 0.7 * (1 - p)
         }
       }
+      updateElevatorCars(scene, performance.now() / 1000)
       controls.update()
       /* 나침반 — 카메라 방위각에 맞춰 북침 회전 */
       if (compassRef.current)

@@ -43,6 +43,16 @@ type MapMode = '2d' | '3d'
 
 const LV_ORDER: Record<FloorId, number> = { B2: 0, B1: 1, F1: 2 }
 const FLOOR_SHORT = Object.fromEntries(floorDefs.map((f) => [f.id, f.short])) as Record<FloorId, string>
+
+/** 일반 설비는 설치 층에만, 엘리베이터는 시작~종료 사이 모든 층에 표시한다. */
+const facilityOnFloor = (facility: SiteModel['facilities'][number], floor: FloorId) => {
+  if (facility.type !== 'elevator') return facility.floor === floor
+  const from = LV_ORDER[facility.floor]
+  const to = LV_ORDER[facility.toFloor ?? facility.floor]
+  const current = LV_ORDER[floor]
+  return current >= Math.min(from, to) && current <= Math.max(from, to)
+}
+
 const floorStepBtn =
   'flex h-7 w-7 cursor-pointer items-center justify-center rounded-md text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink disabled:cursor-default disabled:opacity-30'
 
@@ -273,8 +283,10 @@ const StaticLayers = memo(function StaticLayers({
       .filter((z) => z.floors.includes(floor))
       .map((z) => ({ ...z, risk: (zoneRisk.get(z.name)?.level ?? 'good') as GasLevel }))
     const bs = mapBeacons.filter((b) => (b.level ?? 'F1') === floor)
-    const gs = floor === 'F1' ? gateways : []
-    const gds = (floor === 'F1' ? gasDetectors : []).map((g) => ({ ...g, lvl: gasSeverity(g) }))
+    const gs = gateways.filter((g) => (g.level ?? 'F1') === floor)
+    const gds = gasDetectors
+      .filter((g) => (g.level ?? 'F1') === floor)
+      .map((g) => ({ ...g, lvl: gasSeverity(g) }))
     const tns = utilityTunnels
       .filter((t) => t.level === floor)
       .map((t) => ({ ...t, pts: toStr(t.path) }))
@@ -290,9 +302,9 @@ const StaticLayers = memo(function StaticLayers({
     const rms = rooms
       .filter((r) => r.level === floor)
       .map((r) => ({ ...r, ly: Math.min(...parsePoints(r.points).map((p) => p[1])) + 11 }))
-    /* 지오펜스·기타 설비 — 맵 빌더 제작 요소, 선택 층만 */
+    /* 지오펜스·기타 설비 — 엘리베이터는 연결된 모든 층에 표시 */
     const fences = model.geofences.filter((f) => f.floor === floor)
-    const fcs = model.facilities.filter((f) => f.floor === floor)
+    const fcs = model.facilities.filter((f) => facilityOnFloor(f, floor))
     return { zs, bs, gs, gds, tns, tl, stairs, rms, fences, fcs }
   }, [floor, model, zones, gateways, mapBeacons, gasDetectors, stairwells, rooms, utilityTunnels, zoneRisk])
 
@@ -569,9 +581,9 @@ const StaticLayers = memo(function StaticLayers({
           />
         </g>
       ))}
-      {/* 기타 설비(맵 빌더 심볼) — 출입구는 도면식 문 심볼, 그 외 코드 칩 */}
+      {/* 기타 설비(맵 빌더 심볼) — 출입구·엘리베이터는 도면식 심볼, 그 외 코드 칩 */}
       {show.facilities && showDevices && layers.fcs.map((f) => (
-        <g key={f.id} transform={`translate(${f.x}, ${f.y}) scale(${km})${rot && f.type !== 'door' ? ` rotate(${-rot})` : ''}`}>
+        <g key={f.id} transform={`translate(${f.x}, ${f.y})${f.type === 'elevator' ? '' : ` scale(${km})`}${rot && f.type !== 'door' && f.type !== 'elevator' ? ` rotate(${-rot})` : ''}`}>
           <title>{`${f.name} · ${f.label}`}</title>
           {f.type === 'door' ? (
             /* 출입구 — 벽 개구부 심볼 (문지방 + 양측 문설주, 방향성 없음) */
@@ -580,6 +592,19 @@ const StaticLayers = memo(function StaticLayers({
               <line x1={-(f.width ?? 12) / 2} y1="-4.5" x2={-(f.width ?? 12) / 2} y2="4.5" stroke={f.color} strokeWidth="1.6" />
               <line x1={(f.width ?? 12) / 2} y1="-4.5" x2={(f.width ?? 12) / 2} y2="4.5" stroke={f.color} strokeWidth="1.6" />
             </g>
+          ) : f.type === 'elevator' ? (
+            /* 엘리베이터 — 샤프트 평면 심볼 (사각 + X 대각선), 실측 폭×깊이·회전 */
+            (() => {
+              const ew = f.width ?? 16
+              const ed = f.depth ?? 16
+              return (
+                <g transform={f.rot ? `rotate(${f.rot})` : undefined}>
+                  <rect x={-ew / 2} y={-ed / 2} width={ew} height={ed} rx="1.5" fill={f.color} fillOpacity="0.12" stroke={f.color} strokeWidth="1.4" vectorEffect="non-scaling-stroke" />
+                  <line x1={-ew / 2} y1={-ed / 2} x2={ew / 2} y2={ed / 2} stroke={f.color} strokeWidth="1" vectorEffect="non-scaling-stroke" />
+                  <line x1={-ew / 2} y1={ed / 2} x2={ew / 2} y2={-ed / 2} stroke={f.color} strokeWidth="1" vectorEffect="non-scaling-stroke" />
+                </g>
+              )
+            })()
           ) : (
             <>
               <rect x="-13" y="-8" width="26" height="16" rx="4" fill={f.color} opacity="0.92" />
@@ -894,8 +919,8 @@ function ZoneDetailModal({
 
   /* 표시 오브젝트(2D) — 선택 층 필터. viewBox 클리핑으로 구역 주변만 보인다 */
   const beacons = mapBeacons.filter((b) => (b.level ?? 'F1') === fl)
-  const dets = fl === 'F1' ? gasDetectors : []
-  const gws = fl === 'F1' ? gateways : []
+  const dets = gasDetectors.filter((g) => (g.level ?? 'F1') === fl)
+  const gws = gateways.filter((g) => (g.level ?? 'F1') === fl)
   const tuns = utilityTunnels.filter((t) => t.level === fl)
   const zoneWorkers = liveWorkers.filter((w) => w.outTime === null && w.zone === zone.name)
   const floorWorkers = zoneWorkers.filter((w) => workerFloor(w) === fl)

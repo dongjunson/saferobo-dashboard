@@ -66,6 +66,8 @@ export interface MapPoint {
   zone: string
   /** 설치 층 — 생략 시 지상층(F1) */
   level?: FloorId
+  /** 중계기 전용 — 건물 옥상 설치 (3D에서 소속 건물 상단에 표시) */
+  roof?: boolean
 }
 
 /* ── 작업영역(Room) — 건물 내 층별 세부 작업 구획 ─────────────────── */
@@ -149,7 +151,12 @@ export interface Stairwell {
   zone: string
   x: number
   y: number
+  /** 시작 층 — 생략 시 지상층(F1) */
+  fromLevel?: FloorId
   toLevel: FloorId
+  /** 맵 빌더에서 설정한 계단 폭·회전 */
+  width?: number
+  rot?: number
 }
 
 export const stairwells: Stairwell[] = [
@@ -341,6 +348,8 @@ export interface GasDetector extends GasReading {
   x: number
   y: number
   zone: string
+  /** 설치 층 — 생략 시 지상층(F1) */
+  level?: FloorId
 }
 
 /** 수집 항목 정의 — 스파크라인 범위(min/max)·시뮬레이션 흔들림(jitter) 포함 */

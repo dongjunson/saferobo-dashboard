@@ -30,6 +30,7 @@ import {
   DEFAULT_ANCHOR,
   FENCE_COLOR,
   loadSavedBuilderMap,
+  pointInShape,
   polyPath,
   rotateBPts,
   samplePoly,
@@ -75,6 +76,9 @@ export interface SiteFacility {
   /** 출입구 전용 — 개구부 폭·벽면 방향 */
   width?: number
   rot?: number
+  /** 엘리베이터 전용 — 종료 층·세로 깊이 */
+  toFloor?: FloorId
+  depth?: number
 }
 
 export interface SiteModel {
@@ -166,9 +170,9 @@ export function resolveSiteModel(): SiteModel {
     }
   })
 
-  /** 좌표가 속한 건물 이름 — bbox 포함 판정, 없으면 '외부' */
+  /** 좌표가 속한 건물 이름 — 회전·타원·다각형 반영 외곽선 포함 판정, 없으면 '외부' */
   const zoneOf = (x: number, y: number): string =>
-    buildings.find((b) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h)?.name ?? '외부'
+    buildings.find((b) => pointInShape(b, x, y))?.name ?? '외부'
 
   const symPoint = (s: BSymbol): MapPoint => ({
     id: s.name,
@@ -178,7 +182,9 @@ export function resolveSiteModel(): SiteModel {
     level: levelToFloor(s.level),
   })
 
-  const bGateways = symbols.filter((s) => s.type === 'gateway').map(symPoint)
+  const bGateways = symbols
+    .filter((s) => s.type === 'gateway')
+    .map((s) => ({ ...symPoint(s), roof: s.roof }))
   const bBeacons = symbols.filter((s) => s.type === 'beacon').map(symPoint)
 
   const bGas: GasDetector[] = symbols
@@ -191,6 +197,7 @@ export function resolveSiteModel(): SiteModel {
         x: s.x,
         y: s.y,
         zone,
+        level: levelToFloor(s.level),
         /* 결정적 목업 측정값 — 전 항목 정상 범위 */
         o2: +(20.6 + hash01(s.name, 1) * 0.6).toFixed(1),
         h2s: +(hash01(s.name, 2) * 0.4).toFixed(1),
@@ -207,8 +214,10 @@ export function resolveSiteModel(): SiteModel {
       zone: zoneOf(s.x, s.y),
       x: s.x,
       y: s.y,
-      /* 시작/도착층 중 낮은 층 — 관제 Stairwell은 '연결되는 최하층' 의미 */
-      toLevel: levelToFloor(Math.min(s.level, s.toLevel ?? s.level)),
+      fromLevel: levelToFloor(s.level),
+      toLevel: levelToFloor(s.toLevel ?? s.level),
+      width: s.width,
+      rot: s.rot,
     }))
 
   const geofences: SiteGeofence[] = els
@@ -270,6 +279,8 @@ export function resolveSiteModel(): SiteModel {
         floor: levelToFloor(s.level),
         width: s.width,
         rot: s.rot,
+        toFloor: s.toLevel != null ? levelToFloor(s.toLevel) : undefined,
+        depth: s.depth,
       }
     })
 

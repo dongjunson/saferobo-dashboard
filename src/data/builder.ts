@@ -39,10 +39,13 @@ export interface BTunnel {
   id: string
   kind: 'tunnel'
   name: string
+  /** 표시·판정용 폴리라인 — bpts가 있으면 그 샘플 결과 */
   path: Array<[number, number]>
   level: number
   /** 통로 폭 (기본 18) */
   width?: number
+  /** 곡선 편집 원본 포인트(c: 곡선 제어점) — 편집 시 path를 재샘플한다 */
+  bpts?: BPoint[]
 }
 
 /** 작업영역(Room) — 건물 내 층별 세부 작업 구획.
@@ -91,14 +94,18 @@ export interface BSymbol {
   x: number
   y: number
   level: number
-  /** 계단 전용 — 도착 층 (시작층보다 낮으면 하행, 높으면 상행) */
+  /** 계단·엘리베이터 전용 — 도착(종료) 층. level이 시작 층 */
   toLevel?: number
-  /** 계단·출입구 전용 — 폭 (계단 기본 34, 출입구 기본 12) */
+  /** 계단·출입구·엘리베이터 전용 — 가로 폭 (계단 34, 출입구 12, 엘리베이터 16) */
   width?: number
-  /** 계단·출입구 전용 — 회전각(°, 시계방향). 출입구는 벽면 스냅 시 자동 설정 */
+  /** 엘리베이터 전용 — 세로 깊이 (기본 16) */
+  depth?: number
+  /** 계단·출입구·엘리베이터 전용 — 회전각(°, 시계방향). 출입구는 벽면 스냅 시 자동 설정 */
   rot?: number
   /** 비콘 전용 — 소속 지오펜스 id (비콘은 지오펜스 내부에만 배치) */
   fenceId?: string
+  /** 중계기 전용 — 건물 옥상 설치 (3D에서 건물 상단에 표시) */
+  roof?: boolean
 }
 
 export type BElement = BBuilding | BGeofence | BSymbol | BTunnel | BRoom
@@ -106,14 +113,22 @@ export type BElement = BBuilding | BGeofence | BSymbol | BTunnel | BRoom
 /** 지오펜스 표시색 — 가상 영역(홀로그램) 톤. 등급색은 관제 실데이터 연동 시 동적 적용 */
 export const FENCE_COLOR = '#22d3ee'
 
-/* ── 심볼 팔레트 — 하수도 사업소 설비 세트 ── */
+/* ── 심볼 팔레트 — 하수도 사업소 설비 세트, 배치 대상별 그룹 ── */
+export const SYMBOL_GROUPS = [
+  { key: 'building', label: '건물', hint: '건물 층·벽면 기준 배치' },
+  { key: 'fence', label: '지오펜스', hint: '지오펜스 내부에만 배치' },
+  { key: 'tunnel', label: '공동구', hint: '공동구 라인에 스냅' },
+] as const
+export type SymbolGroup = (typeof SYMBOL_GROUPS)[number]['key']
+
 export const SYMBOL_DEFS = [
-  { type: 'gateway', code: 'GW', label: '중계기', color: '#3b82f6' },
-  { type: 'beacon', code: 'BC', label: '비콘', color: '#8b5cf6' },
-  { type: 'gas', code: 'GAS', label: '가스검침기', color: '#f59e0b' },
-  { type: 'door', code: 'DR', label: '출입구', color: '#38bdf8' },
-  { type: 'stairs', code: 'ST', label: '계단실', color: '#94a3b8' },
-  { type: 'entrance', code: 'ENT', label: '공동구 출입구', color: '#60a5fa' },
+  { type: 'gateway', code: 'GW', label: '중계기', color: '#3b82f6', group: 'building', hint: '건물 옥상 설치 가능' },
+  { type: 'gas', code: 'GAS', label: '가스검침기', color: '#f59e0b', group: 'building', hint: '건물 층에 설치' },
+  { type: 'door', code: 'DR', label: '출입구', color: '#38bdf8', group: 'building', hint: '건물 벽면에 스냅' },
+  { type: 'stairs', code: 'ST', label: '계단실', color: '#94a3b8', group: 'building', hint: '건물 벽과 겹치지 않게 배치' },
+  { type: 'elevator', code: 'EV', label: '엘리베이터', color: '#f472b6', group: 'building', hint: '건물 층 구간 연결' },
+  { type: 'beacon', code: 'BC', label: '비콘', color: '#8b5cf6', group: 'fence', hint: '지오펜스 내부에만 배치' },
+  { type: 'entrance', code: 'ENT', label: '공동구 출입구', color: '#60a5fa', group: 'tunnel', hint: '공동구 라인에 자동 스냅' },
 ] as const
 export type SymbolType = (typeof SYMBOL_DEFS)[number]['type']
 
@@ -186,6 +201,32 @@ export function samplePoly(pts: BPoint[], seg = 8): Array<[number, number]> {
       out.push([
         a * a * p0.x + 2 * a * t * v.x + t * t * p2.x,
         a * a * p0.y + 2 * a * t * v.y + t * t * p2.y,
+      ])
+    }
+  }
+  return out
+}
+
+/** 곡선 포함 열린 폴리라인 샘플링 — 공동구(bpts) → path 재샘플용.
+ * polyPath(close=false)와 같은 기하: 양 끝은 코너, 곡선은 중점 기반 Q 스무딩 */
+export function samplePolyline(pts: BPoint[], seg = 10): Array<[number, number]> {
+  const n = pts.length
+  if (n < 2) return pts.map((p) => [p.x, p.y])
+  const out: Array<[number, number]> = [[pts[0].x, pts[0].y]]
+  for (let i = 1; i < n; i++) {
+    const v = pts[i]
+    if (!v.c || i === n - 1) {
+      out.push([v.x, v.y])
+      continue
+    }
+    const p0 = midOf(pts[i - 1], v)
+    const p2 = midOf(v, pts[i + 1])
+    for (let s = 0; s <= seg; s++) {
+      const t = s / seg
+      const a = 1 - t
+      out.push([
+        +(a * a * p0.x + 2 * a * t * v.x + t * t * p2.x).toFixed(1),
+        +(a * a * p0.y + 2 * a * t * v.y + t * t * p2.y).toFixed(1),
       ])
     }
   }

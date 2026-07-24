@@ -98,6 +98,59 @@ export function stairFlights(bottomY: number, topY = 0): THREE.Group {
   return grp
 }
 
+/** 엘리베이터 — 시작~종료 층을 잇는 수직 샤프트(반투명 볼륨 + 에지) + 왕복 카.
+ * 원점은 설치 좌표(지표). bottomY/topY는 시작·종료 층의 바닥 절대 고도 */
+export function elevatorShaft(
+  width: number,
+  depth: number,
+  bottomY: number,
+  topY: number,
+): THREE.Group {
+  const grp = new THREE.Group()
+  const h = Math.max(topY + FLOOR_H - bottomY, FLOOR_H)
+  const geo = new THREE.BoxGeometry(width, h - 1, depth)
+  const shaft = new THREE.Mesh(
+    geo,
+    new THREE.MeshStandardMaterial({
+      color: '#f472b6',
+      transparent: true,
+      opacity: 0.16,
+      roughness: 0.8,
+      depthWrite: false,
+    }),
+  )
+  shaft.position.y = bottomY + h / 2
+  const edge = new THREE.LineSegments(
+    new THREE.EdgesGeometry(geo),
+    new THREE.LineBasicMaterial({ color: '#f472b6', transparent: true, opacity: 0.9 }),
+  )
+  edge.position.copy(shaft.position)
+  /* 카 — 렌더 루프에서 최하층↔최상층을 왕복한다. */
+  const carH = FLOOR_H - 8
+  const car = new THREE.Mesh(
+    new THREE.BoxGeometry(Math.max(2, width - 3), carH, Math.max(2, depth - 3)),
+    new THREE.MeshStandardMaterial({ color: '#f9a8d4', transparent: true, opacity: 0.45, roughness: 0.6 }),
+  )
+  const carOffset = carH / 2 + 2
+  car.position.y = bottomY + carOffset
+  car.userData.elevatorMotion = {
+    bottom: bottomY + carOffset,
+    top: topY + carOffset,
+  }
+  grp.add(shaft, edge, car)
+  return grp
+}
+
+/** 모든 엘리베이터 카를 동일한 6초 주기로 부드럽게 상하 왕복시킨다.
+ * elapsedSeconds는 performance.now() 기반 절대 시간을 전달해 두 3D 화면의 위상을 맞춘다. */
+export function updateElevatorCars(root: THREE.Object3D, elapsedSeconds: number) {
+  const p = 0.5 - Math.cos((elapsedSeconds / 6) * Math.PI * 2) * 0.5
+  root.traverse((obj) => {
+    const motion = obj.userData.elevatorMotion as { bottom: number; top: number } | undefined
+    if (motion) obj.position.y = THREE.MathUtils.lerp(motion.bottom, motion.top, p)
+  })
+}
+
 /** 공동구 출입구 — 지표 해치(사각 개구부) + 공동구 층까지 수직 라인.
  * 2D 마커(사각+화살촉)와 대응하는 형태 */
 export function entranceShaft(bottomY: number): THREE.Group {
