@@ -71,7 +71,9 @@ import {
  * 그리고 심볼을 드래그&드롭 배치한다. 배경 지도 타일(위경도 앵커 매핑)과
  * 캔버스 회전을 지원하며, 우측 분할 패널에서 3D 실시간 미리보기. */
 
-const GRID = 10
+/* 격자 한 칸 = 15 m (1 unit = 1.25 m → 12 unit) — 스냅·배경 그리드 공용 */
+const GRID = 12
+const GRID_M = 15
 const MIN_SIZE = 20
 const MAP_W = 1000
 const MAP_H = 640
@@ -1305,6 +1307,32 @@ export default function MapBuilder() {
           ? '드래그: 그리기 · 완성 후 선택 도구로 이동/크기 조절 · 다각형은 변 중점 드래그로 곡선'
           : '휠: 줌 · 빈 곳 드래그: 팬 · Shift+드래그: 회전 · 팔레트 드래그: 심볼 배치 · Delete: 삭제 · Ctrl+Z: 되돌리기'
 
+  /* 작업영역 라벨 충돌 해소 — 전체(모든 층) 보기에서 같은 자리 룸(층만 다른 경우 등)의
+   * 라벨 중심이 겹치면 클러스터로 묶어 세로로 펼치고, 겹침 클러스터는 층 표기를 강제한다 */
+  const roomLabelLayout = (() => {
+    const anchors = roomEls
+      .filter((r) => passLevel(r.level))
+      .map((r) => ({ id: r.id, x: r.x + r.w / 2, y: r.y + r.h / 2, level: r.level }))
+    const layout = new Map<string, { dy: number; multi: boolean }>()
+    const used = new Set<string>()
+    for (const a of anchors) {
+      if (used.has(a.id)) continue
+      const cluster = anchors.filter(
+        (b) => !used.has(b.id) && Math.abs(b.x - a.x) < 56 && Math.abs(b.y - a.y) < 12,
+      )
+      cluster.forEach((c) => used.add(c.id))
+      /* 위층부터 아래층 순으로 위→아래 정렬 */
+      cluster.sort((p, q) => q.level - p.level)
+      cluster.forEach((c, i) =>
+        layout.set(c.id, {
+          dy: (i - (cluster.length - 1) / 2) * 11,
+          multi: cluster.length > 1,
+        }),
+      )
+    }
+    return layout
+  })()
+
   /* 선택된 형태 요소 — 다각형이면 정점/곡선 편집 핸들 표시 */
   const shaped: ShapedEl | null =
     selected && (selected.kind === 'building' || selected.kind === 'fence' || selected.kind === 'room')
@@ -1573,11 +1601,12 @@ export default function MapBuilder() {
             onDoubleClick={onCanvasDblClick}
           >
             <defs>
-              <pattern id="mb-grid" width={GRID * 2} height={GRID * 2} patternUnits="userSpaceOnUse">
-                <path d={`M ${GRID * 2} 0 L 0 0 0 ${GRID * 2}`} fill="none" stroke="var(--grid-line)" strokeWidth="0.6" />
+              {/* 보조선 15 m 간격 · 주선 5칸(75 m)마다 */}
+              <pattern id="mb-grid" width={GRID} height={GRID} patternUnits="userSpaceOnUse">
+                <path d={`M ${GRID} 0 L 0 0 0 ${GRID}`} fill="none" stroke="var(--grid-line)" strokeWidth="0.6" />
               </pattern>
-              <pattern id="mb-grid-major" width={100} height={100} patternUnits="userSpaceOnUse">
-                <path d="M 100 0 L 0 0 0 100" fill="none" stroke="var(--axis-line)" strokeWidth="0.6" />
+              <pattern id="mb-grid-major" width={GRID * 5} height={GRID * 5} patternUnits="userSpaceOnUse">
+                <path d={`M ${GRID * 5} 0 L 0 0 0 ${GRID * 5}`} fill="none" stroke="var(--axis-line)" strokeWidth="0.6" />
               </pattern>
             </defs>
             {/* 회전 그룹 — 타일·그리드·요소 전부 함께 회전 (뷰 회전) */}
@@ -1726,18 +1755,32 @@ export default function MapBuilder() {
                         <rect x={el.x} y={el.y} width={el.w} height={el.h} {...roomProps}>{roomTitle}</rect>
                       )}
                     </g>
-                    <text
-                      x={cx}
-                      y={cy + 3}
-                      textAnchor="middle"
-                      fontSize={9}
-                      fill="var(--text-muted)"
-                      pointerEvents="none"
-                      transform={counterRot(cx, cy + 3)}
-                    >
-                      {el.name}
-                      {levelFilter === 'all' && el.level !== 1 ? ` · ${levelShort(el.level)}` : ''}
-                    </text>
+                    {(() => {
+                      /* 겹침 클러스터면 세로 오프셋 + 층 표기 강제, 배경 헤일로로 가독성 확보 */
+                      const lay = roomLabelLayout.get(el.id)
+                      const dy = lay?.dy ?? 0
+                      const ly = cy + 3 + dy
+                      const showLv =
+                        levelFilter === 'all' && (el.level !== 1 || (lay?.multi ?? false))
+                      return (
+                        <text
+                          x={cx}
+                          y={ly}
+                          textAnchor="middle"
+                          fontSize={9}
+                          fill={lay?.multi && sel ? 'var(--text-secondary)' : 'var(--text-muted)'}
+                          paintOrder="stroke"
+                          stroke="var(--page)"
+                          strokeWidth={2.5}
+                          strokeOpacity={0.75}
+                          pointerEvents="none"
+                          transform={counterRot(cx, ly)}
+                        >
+                          {el.name}
+                          {showLv ? ` · ${levelShort(el.level)}` : ''}
+                        </text>
+                      )
+                    })()}
                   </g>
                 )
               })}
@@ -2452,7 +2495,7 @@ export default function MapBuilder() {
                       </p>
                     )}
                     <p className="text-[11px] text-muted">
-                      형태: {selected.shape === 'rect' ? '직각' : selected.shape === 'ellipse' ? '타원형' : '포인트(다각형)'} · 격자 {GRID}px 스냅
+                      형태: {selected.shape === 'rect' ? '직각' : selected.shape === 'ellipse' ? '타원형' : '포인트(다각형)'} · 격자 {GRID_M}m 스냅
                       {selected.rot ? ` · 회전 ${selected.rot}°` : ''}
                     </p>
                   </div>

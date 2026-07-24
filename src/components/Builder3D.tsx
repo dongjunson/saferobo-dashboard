@@ -8,6 +8,7 @@ import {
   doorModel,
   elevatorShaft,
   entranceShaft,
+  gasCoverageSphere,
   gasDetectorModel,
   gatewayModel,
   geofenceZone,
@@ -290,7 +291,10 @@ export default function Builder3D({ elements }: { elements: BElement[] }) {
         } else if (el.type === 'gas') {
           const grp = gasDetectorModel('#f59e0b')
           grp.position.set(el.x, baseY, el.y)
-          group.add(grp)
+          /* 커버리지(반경 15m) — 빌더 미리보기는 기본색, 관제에서 등급 색 반영 */
+          const cov = gasCoverageSphere('#f59e0b')
+          cov.position.set(el.x, baseY + 3.4, el.y)
+          group.add(grp, cov)
         } else if (el.type === 'stairs') {
           /* 시작층→도착층 구간 플라이트 · 폭·회전 반영 */
           const to = el.toLevel ?? -1

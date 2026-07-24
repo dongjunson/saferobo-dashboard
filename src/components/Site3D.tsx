@@ -18,6 +18,7 @@ import {
   doorModel,
   elevatorShaft,
   entranceShaft,
+  gasCoverageSphere,
   gasDetectorModel,
   gatewayModel,
   geofenceZone,
@@ -398,10 +399,15 @@ export default function Site3D({
     }
     for (const g of gasDetectors) {
       if (focus && !inBox(g.x, g.y)) continue
-      const grp = gasDetectorModel(col.gas[gasSeverity(g)])
-      grp.position.set(g.x, LEVEL_Y[g.level ?? 'F1'], g.y)
-      scene.add(grp)
-      layerObjs.gas.push(grp)
+      const sevColor = col.gas[gasSeverity(g)]
+      const baseY = LEVEL_Y[g.level ?? 'F1']
+      const grp = gasDetectorModel(sevColor)
+      grp.position.set(g.x, baseY, g.y)
+      /* 커버리지(반경 15m) — 등급 색 은은한 구, 실데이터 연동 시 색이 함께 바뀐다 */
+      const cov = gasCoverageSphere(sevColor)
+      cov.position.set(g.x, baseY + 3.4, g.y)
+      scene.add(grp, cov)
+      layerObjs.gas.push(grp, cov)
     }
 
     /* ── 지오펜스(맵 빌더 제작) — 실체 없는 가상 영역:

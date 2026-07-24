@@ -1,11 +1,17 @@
 import * as THREE from 'three'
 import type { FloorId } from '../data/site'
+import { M_PER_UNIT } from './TileLayer'
 
 /* Site3D·Builder3D 공용 three.js 헬퍼 — 지도 좌표(x 0-1000, y 0-640)를
  * three 좌표(X=x, Z=y, Y=고도)로 매핑하는 규약을 공유한다. */
 
 export const FLOOR_H = 25 // 층고 (시각화용 과장 스케일)
 export const LEVEL_Y: Record<FloorId, number> = { F1: 0, B1: -FLOOR_H, B2: -FLOOR_H * 2 }
+
+/** 고정형 가스검침기 커버리지 반경 (실측 m) */
+export const GAS_COVERAGE_M = 15
+/** 커버리지 반경 — 지도 단위 환산 (1 unit = 1.25 m → 12 unit) */
+export const GAS_COVERAGE_UNITS = GAS_COVERAGE_M / M_PER_UNIT
 
 export function parsePts(points: string): Array<[number, number]> {
   return points
@@ -72,6 +78,41 @@ export function gasDetectorModel(color: string): THREE.Group {
   )
   head.position.y = 0.8
   grp.add(body, head)
+  return grp
+}
+
+/** 가스검침기 커버리지 구 — 은은한 반투명 셸(내부 글로우) + 지면 범위 링.
+ * color는 판정 등급 색: 센서 실데이터 연동 시 등급 색이 그대로 반영된다.
+ * 원점은 센서 헤드 높이(설치 좌표 기준 y+3.4)에 두고 배치한다 */
+export function gasCoverageSphere(color: string, radius = GAS_COVERAGE_UNITS): THREE.Group {
+  const grp = new THREE.Group()
+  const geo = new THREE.SphereGeometry(radius, 28, 18)
+  /* 앞면 + 뒷면 이중 셸 — 낮은 불투명도로 겹쳐 깊이감 있는 글로우 */
+  const front = new THREE.Mesh(
+    geo,
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.06, depthWrite: false }),
+  )
+  const back = new THREE.Mesh(
+    geo,
+    new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.045,
+      depthWrite: false,
+      side: THREE.BackSide,
+    }),
+  )
+  /* 수평 범위 링 — 커버리지 경계를 도면 감각으로 읽을 수 있게 */
+  const ringPts: THREE.Vector3[] = []
+  for (let i = 0; i <= 48; i++) {
+    const a = (i / 48) * Math.PI * 2
+    ringPts.push(new THREE.Vector3(Math.cos(a) * radius, 0, Math.sin(a) * radius))
+  }
+  const ring = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(ringPts),
+    new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.28 }),
+  )
+  grp.add(back, front, ring)
   return grp
 }
 

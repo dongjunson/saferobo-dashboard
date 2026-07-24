@@ -210,6 +210,38 @@ function parsePoints(points: string): Array<[number, number]> {
 const toStr = (pts: Array<[number, number]>) =>
   pts.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ')
 
+/** 점과 공동구 중심선 사이의 최단 거리 */
+function distanceToPath(path: Array<[number, number]>, x: number, y: number): number {
+  if (path.length === 0) return Number.POSITIVE_INFINITY
+  if (path.length === 1) return Math.hypot(x - path[0][0], y - path[0][1])
+
+  let nearest = Number.POSITIVE_INFINITY
+  for (let i = 1; i < path.length; i += 1) {
+    const [ax, ay] = path[i - 1]
+    const [bx, by] = path[i]
+    const dx = bx - ax
+    const dy = by - ay
+    const lengthSq = dx * dx + dy * dy
+    const ratio = lengthSq === 0 ? 0 : Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / lengthSq))
+    nearest = Math.min(nearest, Math.hypot(x - (ax + dx * ratio), y - (ay + dy * ratio)))
+  }
+  return nearest
+}
+
+/** 현재 표시 중인 공동구와 같은 층이고 공동구 폭에 접한 출입구만 반환 */
+function connectedTunnelEntrances(
+  entrances: SiteModel['tunnelEntrances'],
+  tunnels: SiteModel['utilityTunnels'],
+) {
+  return entrances.filter((entrance) =>
+    tunnels.some(
+      (tunnel) =>
+        tunnel.level === (entrance.level ?? 'B1') &&
+        distanceToPath(tunnel.path, entrance.x, entrance.y) <= (tunnel.width ?? 18) / 2 + 6,
+    ),
+  )
+}
+
 /** 타원형 구역(맵 빌더 제작)의 bbox → SVG ellipse 파라미터 */
 function zoneEllipse(z: Zone) {
   const pts = parsePoints(z.points)
@@ -290,6 +322,7 @@ const StaticLayers = memo(function StaticLayers({
     const tns = utilityTunnels
       .filter((t) => t.level === floor)
       .map((t) => ({ ...t, pts: toStr(t.path) }))
+    const ents = connectedTunnelEntrances(tunnelEntrances, tns)
     const tl = floor === 'B1' ? { x: 620, y: 330 } : floor === 'B2' ? { x: 745, y: 330 } : null
 
     /* 계단실 — 설치된 건물에만(복수 개소 가능). 건물이 현재 층에
@@ -305,8 +338,8 @@ const StaticLayers = memo(function StaticLayers({
     /* 지오펜스·기타 설비 — 엘리베이터는 연결된 모든 층에 표시 */
     const fences = model.geofences.filter((f) => f.floor === floor)
     const fcs = model.facilities.filter((f) => facilityOnFloor(f, floor))
-    return { zs, bs, gs, gds, tns, tl, stairs, rms, fences, fcs }
-  }, [floor, model, zones, gateways, mapBeacons, gasDetectors, stairwells, rooms, utilityTunnels, zoneRisk])
+    return { zs, bs, gs, gds, tns, ents, tl, stairs, rms, fences, fcs }
+  }, [floor, model, zones, gateways, mapBeacons, gasDetectors, stairwells, rooms, utilityTunnels, tunnelEntrances, zoneRisk])
 
   const fontSize = Math.max(6, Math.min(14, 12 * k))
   const km = Math.min(k, 2.5) // 장비 마커는 광역 줌아웃에서 과대해지지 않도록 별도 상한
@@ -323,11 +356,16 @@ const StaticLayers = memo(function StaticLayers({
       {showGrid && (
         <>
           <defs>
-            <pattern id="dash-inf-grid" width={80} height={80} patternUnits="userSpaceOnUse">
-              <path d="M 80 0 L 0 0 0 80" fill="none" stroke="var(--grid-line)" strokeWidth="0.6" />
+            {/* 그리드 간격 15 m (1 unit = 1.25 m → 12 unit) — 맵 빌더 격자와 동일 */}
+            <pattern id="dash-inf-grid" width={12} height={12} patternUnits="userSpaceOnUse">
+              <path d="M 12 0 L 0 0 0 12" fill="none" stroke="var(--grid-line)" strokeWidth="0.4" opacity="0.8" />
+            </pattern>
+            <pattern id="dash-inf-grid-major" width={60} height={60} patternUnits="userSpaceOnUse">
+              <path d="M 60 0 L 0 0 0 60" fill="none" stroke="var(--grid-line)" strokeWidth="0.6" />
             </pattern>
           </defs>
           <rect x={-12000} y={-12000} width={25000} height={25000} fill="url(#dash-inf-grid)" />
+          <rect x={-12000} y={-12000} width={25000} height={25000} fill="url(#dash-inf-grid-major)" />
         </>
       )}
       {/* 지하 공동구 — 몸체는 불투명 스트로크를 그룹에 모아 그룹 opacity로 합성:
@@ -616,7 +654,7 @@ const StaticLayers = memo(function StaticLayers({
         </g>
       ))}
       {/* 공동구 출입구(수직구·계단실) */}
-      {show.tunnels && showDevices && tunnelEntrances.map((e) => (
+      {show.tunnels && showDevices && layers.ents.map((e) => (
         <g
           key={e.id}
           transform={`translate(${e.x}, ${e.y}) scale(${km})${rot ? ` rotate(${-rot})` : ''}`}
@@ -922,6 +960,7 @@ function ZoneDetailModal({
   const dets = gasDetectors.filter((g) => (g.level ?? 'F1') === fl)
   const gws = gateways.filter((g) => (g.level ?? 'F1') === fl)
   const tuns = utilityTunnels.filter((t) => t.level === fl)
+  const visibleTunnelEntrances = connectedTunnelEntrances(tunnelEntrances, tuns)
   const zoneWorkers = liveWorkers.filter((w) => w.outTime === null && w.zone === zone.name)
   const floorWorkers = zoneWorkers.filter((w) => workerFloor(w) === fl)
   const zoneDets = gasDetectors.filter((d) => d.zone === zone.name)
@@ -1115,7 +1154,7 @@ function ZoneDetailModal({
                     </g>
                   ))}
                 {/* 공동구 출입구 */}
-                {tunnelEntrances.map((e) => (
+                {visibleTunnelEntrances.map((e) => (
                   <g key={e.id} transform={`translate(${e.x}, ${e.y}) scale(${msc})`}>
                     <rect x="-4" y="-4" width="8" height="8" rx="1.5" fill="var(--surface-1)" stroke="var(--series-1)" strokeWidth="1.4">
                       <title>{`${e.id} · 공동구 출입구 (${FLOOR_SHORT[e.level ?? 'B1']} 연결)`}</title>
