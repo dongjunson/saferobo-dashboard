@@ -20,6 +20,27 @@
   읽고 쓴다(부분 업데이트 없음 — 빌더가 배열 전체를 재저장).
 - 파생·계산 값은 저장하지 않는다(§6).
 
+### 1.1 렌더링 파생 구조 — 저장은 도메인 JSON 하나, 2D/3D는 전부 파생
+
+저장 대상은 SVG 마크업이 아니라 **2D 도면의 도메인 데이터(좌표·크기·속성 JSON)** 다.
+2D SVG와 3D three.js는 같은 `elements`를 각자 소비해 렌더링하므로,
+**DB에는 이 JSON만 저장하면 3D는 자동으로 따라온다** (3D 전용 저장 데이터 없음).
+
+```text
+                         ┌─ 맵 빌더 2D ──── MapBuilder.tsx  → SVG
+BuilderMap.elements ─────┼─ 맵 빌더 3D ──── Builder3D.tsx   → three.js (shapeOutline 정규화)
+(DB 저장 대상 · JSON)    │
+                         └─ siteModel 변환 ┬─ 관제 2D ────── SiteMap.tsx → SVG
+                            (마운트 시 파생)└─ 관제 3D ────── Site3D.tsx  → three.js
+```
+
+- 좌표 규약 공유: 지도 (x, y) → three (X=x, Z=y), 고도 Y는 `level × FLOOR_H(25)` —
+  층고·색상·장비 모델 형태 등 3D 표현 파라미터는 **클라이언트 상수**(three-utils.ts)라
+  저장하지 않는다.
+- 곡선·회전은 렌더 시 `shapeOutline()`으로 폴리곤에 bake — 저장은 원본
+  (`pts`·`rot`·`bpts`)만 한다. 유일한 예외는 공동구 `path`(§3.4) — 곡선 샘플 캐시이자
+  구버전(직선) 공동구의 원본이라 함께 저장한다.
+
 ---
 
 ## 2. 최상위 문서 — BuilderMap
