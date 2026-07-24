@@ -9,6 +9,7 @@ import {
   type GasLevel,
 } from '../data/site'
 import type { SiteModel } from '../data/siteModel'
+import { DEFAULT_TUNNEL_WIDTH } from '../data/builder'
 import { Compass } from './TileLayer'
 import {
   FLOOR_H,
@@ -46,6 +47,7 @@ export type LayerKey =
   | 'stairs'
   | 'rooms'
   | 'fences'
+  | 'obstacles'
   | 'facilities'
 
 /** 카메라 보기 프리셋 — n은 같은 프리셋 재클릭도 적용되도록 하는 시퀀스 */
@@ -105,6 +107,7 @@ export default function Site3D({
       utilityTunnels,
       tunnelEntrances,
       geofences,
+      obstacles,
       facilities,
       zoneRisk,
     } = model
@@ -118,6 +121,7 @@ export default function Site3D({
       stairs: [],
       rooms: [],
       fences: [],
+      obstacles: [],
       facilities: [],
     }
 
@@ -360,7 +364,7 @@ export default function Site3D({
         const [x0, z0] = t.path[i]
         const [x1, z1] = t.path[i + 1]
         if (focus && !inBox(x0, z0) && !inBox(x1, z1)) continue
-        const seg = tunnelSegment(Math.hypot(x1 - x0, z1 - z0), tunMats, t.width ?? 18)
+        const seg = tunnelSegment(Math.hypot(x1 - x0, z1 - z0), tunMats, t.width ?? DEFAULT_TUNNEL_WIDTH)
         seg.position.set((x0 + x1) / 2, yBase + (segIdx++ % 7) * 0.03, (z0 + z1) / 2)
         seg.rotation.y = -Math.atan2(z1 - z0, x1 - x0)
         scene.add(seg)
@@ -423,6 +427,40 @@ export default function Site3D({
       fLbl.position.set(fcx, baseY + FLOOR_H + 4, fcz)
       scene.add(zone, fLbl)
       layerObjs.fences.push(zone, fLbl)
+    }
+
+    /* ── 지오펜스 내부 장애물 — 맵 빌더 3D와 동일한 반투명 솔리드 볼륨 ── */
+    for (const obstacle of obstacles) {
+      const cx = obstacle.x + obstacle.w / 2
+      const cz = obstacle.y + obstacle.h / 2
+      if (focus && !inBox(cx, cz)) continue
+      const baseY = LEVEL_Y[obstacle.floor]
+      const height = 12
+      const geometry =
+        obstacle.shape === 'ellipse'
+          ? new THREE.CylinderGeometry(0.5, 0.5, height, 28)
+          : new THREE.BoxGeometry(obstacle.w, height, obstacle.h)
+      const mesh = new THREE.Mesh(
+        geometry,
+        new THREE.MeshStandardMaterial({
+          color: '#64748b',
+          roughness: 0.8,
+          transparent: true,
+          opacity: 0.75,
+        }),
+      )
+      if (obstacle.shape === 'ellipse') mesh.scale.set(obstacle.w, 1, obstacle.h)
+      mesh.rotation.y = (-((obstacle.rot ?? 0) * Math.PI)) / 180
+      mesh.position.set(cx, baseY + height / 2, cz)
+      const edge = new THREE.LineSegments(
+        new THREE.EdgesGeometry(geometry, obstacle.shape === 'ellipse' ? 30 : 1),
+        new THREE.LineBasicMaterial({ color: '#94a3b8', transparent: true, opacity: 0.7 }),
+      )
+      edge.scale.copy(mesh.scale)
+      edge.rotation.copy(mesh.rotation)
+      edge.position.copy(mesh.position)
+      scene.add(mesh, edge)
+      layerObjs.obstacles.push(mesh, edge)
     }
 
     /* ── 기타 설비(맵 빌더 심볼) — 출입구는 문틀 모델, 그 외 박스 마커 ── */

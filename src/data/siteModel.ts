@@ -37,6 +37,7 @@ import {
   shapeOutline,
   symbolDef,
   type BBuilding,
+  type BObstacle,
   type BRoom,
   type BSymbol,
   type BTunnel,
@@ -60,6 +61,21 @@ export interface SiteGeofence {
   path?: string
   /** 3D 가상 영역 렌더용 외곽선 좌표 (항상 제공) */
   pts: Array<[number, number]>
+}
+
+/** 지오펜스 내부 물리 장애물 — 맵 빌더의 형태·회전·차폐 속성을 그대로 유지 */
+export interface SiteObstacle {
+  id: string
+  name: string
+  fenceId: string
+  floor: FloorId
+  shape: 'rect' | 'ellipse'
+  x: number
+  y: number
+  w: number
+  h: number
+  rot?: number
+  effect: BObstacle['effect']
 }
 
 /** 기타 설비 심볼 — 대시보드 고유 레이어가 없는 빌더 심볼(출입구 등) */
@@ -96,6 +112,7 @@ export interface SiteModel {
   utilityTunnels: TunnelSegment[]
   tunnelEntrances: MapPoint[]
   geofences: SiteGeofence[]
+  obstacles: SiteObstacle[]
   facilities: SiteFacility[]
   beaconRows: BeaconRow[]
   zoneRisks: ZoneRisk[]
@@ -133,6 +150,7 @@ export function resolveSiteModel(): SiteModel {
       utilityTunnels,
       tunnelEntrances,
       geofences: [],
+      obstacles: [],
       facilities: [],
       beaconRows,
       zoneRisks: risks,
@@ -251,6 +269,22 @@ export function resolveSiteModel(): SiteModel {
       }
     })
 
+  const obstacles: SiteObstacle[] = els
+    .filter((e): e is BObstacle => e.kind === 'obstacle')
+    .map((o) => ({
+      id: o.id,
+      name: o.name,
+      fenceId: o.fenceId,
+      floor: levelToFloor(o.level),
+      shape: o.shape,
+      x: o.x,
+      y: o.y,
+      w: o.w,
+      h: o.h,
+      rot: o.rot,
+      effect: o.effect,
+    }))
+
   /* 지하 공동구 — 빌더에서 그린 라인. 출입구는 'entrance' 심볼 */
   const bTunnels: TunnelSegment[] = els
     .filter((e): e is BTunnel => e.kind === 'tunnel')
@@ -312,6 +346,7 @@ export function resolveSiteModel(): SiteModel {
     utilityTunnels: bTunnels,
     tunnelEntrances: bEntrances,
     geofences,
+    obstacles,
     facilities,
     beaconRows: makeBeaconRows(bBeacons),
     zoneRisks: risks,

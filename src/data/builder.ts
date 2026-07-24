@@ -42,11 +42,16 @@ export interface BTunnel {
   /** 표시·판정용 폴리라인 — bpts가 있으면 그 샘플 결과 */
   path: Array<[number, number]>
   level: number
-  /** 통로 폭 (기본 18) */
+  /** 통로 폭(m) */
   width?: number
   /** 곡선 편집 원본 포인트(c: 곡선 제어점) — 편집 시 path를 재샘플한다 */
   bpts?: BPoint[]
 }
+
+/** 공동구 통로 폭 정책(m) */
+export const MIN_TUNNEL_WIDTH = 3
+export const DEFAULT_TUNNEL_WIDTH = 10
+export const MAX_TUNNEL_WIDTH = 15
 
 /** 작업영역(Room) — 건물 내 층별 세부 작업 구획.
  * shape 생략 시 직각(구버전 저장본 호환) */
@@ -108,7 +113,33 @@ export interface BSymbol {
   roof?: boolean
 }
 
-export type BElement = BBuilding | BGeofence | BSymbol | BTunnel | BRoom
+/** 장애물(구조물) — 지오펜스 내부의 원/직각 오브젝트 (beacon_planning.md §4).
+ * 비콘은 벽면(지오펜스·장애물 외곽)에만 설치되므로 장애물은 설치면이자 차폐(음영) 원인이다 */
+export type ObstacleEffect = 'blocked' | 'heavy' | 'light'
+export interface BObstacle {
+  id: string
+  kind: 'obstacle'
+  name: string
+  /** 소속 지오펜스 — 배치 시 자동 상속 (지오펜스 내부에만 배치) */
+  fenceId: string
+  level: number
+  shape: 'rect' | 'ellipse'
+  x: number
+  y: number
+  w: number
+  h: number
+  rot?: number
+  /** 신호 차폐 효과 — blocked: 차단 · heavy: 강한 감쇠 · light: 경미 */
+  effect: ObstacleEffect
+}
+
+/** 팔레트 장애물 카드 — 데모 축척 기준 기본 크기(unit) */
+export const OBSTACLE_DEFS = [
+  { shape: 'rect', label: '구조물(직각)', code: 'OB', w: 30, h: 20 },
+  { shape: 'ellipse', label: '구조물(원형)', code: 'OB', w: 24, h: 24 },
+] as const
+
+export type BElement = BBuilding | BGeofence | BSymbol | BTunnel | BRoom | BObstacle
 
 /** 지오펜스 표시색 — 가상 영역(홀로그램) 톤. 등급색은 관제 실데이터 연동 시 동적 적용 */
 export const FENCE_COLOR = '#22d3ee'
@@ -408,8 +439,13 @@ export const DEFAULT_ANCHOR = { lat: 37.3503, lng: 126.9401 }
 export interface BuilderMap {
   anchor: { lat: number; lng: number }
   rotation: number
+  /** 축척 (m/unit) — 구버전 저장본은 기본 1.25로 승격 (beacon_planning.md §3.1) */
+  metersPerUnit?: number
   elements: BElement[]
 }
+
+/** 기본 축척 — 1 unit = 1.25 m (기준 영역 1000×640 = 1,250 m × 800 m) */
+export const DEFAULT_M_PER_UNIT = 1.25
 
 export function sampleMap(): BuilderMap {
   return { anchor: { ...DEFAULT_ANCHOR }, rotation: 0, elements: sampleElements() }
@@ -429,6 +465,7 @@ export function loadSavedBuilderMap(): BuilderMap | null {
         return {
           anchor: { ...DEFAULT_ANCHOR },
           rotation: 0,
+          metersPerUnit: DEFAULT_M_PER_UNIT,
           elements: parsed.filter(
             (e) => e.kind !== 'symbol' || SYMBOL_DEFS.some((s) => s.type === e.type),
           ),
@@ -438,6 +475,10 @@ export function loadSavedBuilderMap(): BuilderMap | null {
         return {
           anchor: m.anchor ?? { ...DEFAULT_ANCHOR },
           rotation: typeof m.rotation === 'number' ? m.rotation : 0,
+          metersPerUnit:
+            typeof m.metersPerUnit === 'number' && m.metersPerUnit > 0
+              ? m.metersPerUnit
+              : DEFAULT_M_PER_UNIT,
           /* 팔레트에서 제거된 심볼 타입(CCTV·비상벨·펌프·전기설비 등)은 정리 */
           elements: m.elements.filter(
             (e) => e.kind !== 'symbol' || SYMBOL_DEFS.some((s) => s.type === e.type),

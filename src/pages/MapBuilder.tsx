@@ -4,6 +4,8 @@ import {
   ArrowDownToLine,
   ArrowUpDown,
   Box,
+  ClipboardList,
+  Copy,
   Building2,
   ChevronDown,
   ChevronUp,
@@ -38,9 +40,13 @@ import {
 import type { ReactNode } from 'react'
 import Builder3D from '../components/Builder3D'
 import TileLayer, { Compass, ScaleBar, type BgKind, type ViewBox } from '../components/TileLayer'
+import { Select } from '../components/ui'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/ui/tooltip'
 import {
   DEFAULT_ANCHOR,
+  DEFAULT_TUNNEL_WIDTH,
+  MAX_TUNNEL_WIDTH,
+  MIN_TUNNEL_WIDTH,
   FENCE_COLOR,
   SYMBOL_DEFS,
   SYMBOL_GROUPS,
@@ -54,9 +60,11 @@ import {
   saveBuilderMap,
   shapeOutline,
   symbolDef,
+  OBSTACLE_DEFS,
   type BBuilding,
   type BElement,
   type BGeofence,
+  type BObstacle,
   type BPoint,
   type BRoom,
   type BSymbol,
@@ -93,7 +101,9 @@ const SYMBOL_ICON: Record<SymbolType, ReactNode> = {
 /* 도구 = 대상(무엇을) × 형태(어떤 모양으로) 2단 구성 —
  * 건물/작업영역/지오펜스는 직각·타원·다각형 공통 지원 */
 type Tool = 'select' | 'building' | 'room' | 'fence' | 'tunnel'
-type ShapedEl = BBuilding | BGeofence | BRoom
+type ShapedEl = BBuilding | BGeofence | BRoom | BObstacle
+/** 다각형(pts) 편집이 가능한 형태 요소 — 장애물은 직각/원형만 지원 */
+type PolyShapedEl = BBuilding | BGeofence | BRoom
 type LevelFilter = 'all' | number
 interface Draft {
   x: number
@@ -220,7 +230,7 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 
 const INPUT_CLS =
   'h-9 w-full rounded-[8px] border border-hairline bg-surface-2 px-2.5 text-sm text-ink outline-none focus:border-primary/60'
-const SELECT_CLS = `${INPUT_CLS} map-builder-select appearance-none pr-9`
+const SELECT_CLS = INPUT_CLS
 const ICON_BTN =
   'flex size-9 cursor-pointer items-center justify-center rounded-lg text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink'
 
@@ -345,9 +355,12 @@ export default function MapBuilder() {
   const passLevel = (lv: number) => levelFilter === 'all' || lv === levelFilter
   const defaultLevel = () => (typeof levelFilter === 'number' ? levelFilter : 1)
 
-  /** 보호 편집 모드에서 변경 가능한 요소 — 지오펜스와 비콘만 허용한다. */
+  /** 보호 편집 모드에서 변경 가능한 요소 — 지오펜스·비콘·장애물(플래닝 요소)만 허용한다. */
   const isProtectedEditable = (el: BElement | null | undefined) =>
-    !!el && (el.kind === 'fence' || (el.kind === 'symbol' && el.type === 'beacon'))
+    !!el &&
+    (el.kind === 'fence' ||
+      el.kind === 'obstacle' ||
+      (el.kind === 'symbol' && el.type === 'beacon'))
 
   const editCursor = (el: BElement) =>
     tool === 'select' ? (protectedEdit && !isProtectedEditable(el) ? 'not-allowed' : 'move') : undefined
@@ -420,12 +433,18 @@ export default function MapBuilder() {
     commit(
       elements.filter((e) => {
         if (e.id === selectedId) return false
-        /* 지오펜스 삭제 시 소속 비콘도 함께 제거 */
+        /* 지오펜스 삭제 시 소속 비콘·장애물도 함께 제거 */
         if (
           target?.kind === 'fence' &&
           e.kind === 'symbol' &&
           e.type === 'beacon' &&
           (e.fenceId === selectedId || pointInShape(target, e.x, e.y))
+        )
+          return false
+        if (
+          target?.kind === 'fence' &&
+          e.kind === 'obstacle' &&
+          (e.fenceId === selectedId || pointInShape(target, e.x + e.w / 2, e.y + e.h / 2))
         )
           return false
         return true
@@ -497,7 +516,7 @@ export default function MapBuilder() {
     let best: { d: number; x: number; y: number; level: number } | null = null
     for (const t of list) {
       if (t.kind !== 'tunnel') continue
-      const th = (t.width ?? 18) / 2 + 12
+      const th = (t.width ?? DEFAULT_TUNNEL_WIDTH) / 2 + 12
       for (let i = 0; i < t.path.length - 1; i++) {
         const [x1, y1] = t.path[i]
         const [x2, y2] = t.path[i + 1]
@@ -635,6 +654,7 @@ export default function MapBuilder() {
         name: `공동구 ${tunnels.length + 1}`,
         path: pts.map((p) => [p.x, p.y] as [number, number]),
         level: typeof levelFilter === 'number' && levelFilter < 0 ? levelFilter : -1,
+        width: DEFAULT_TUNNEL_WIDTH,
       }
       commit([...elements, el])
       setSelectedId(el.id)
@@ -714,9 +734,11 @@ export default function MapBuilder() {
         ? elements
             .filter(
               (c) =>
-                c.kind === 'symbol' &&
-                c.type === 'beacon' &&
-                (c.fenceId === el.id || pointInShape(el, c.x, c.y)),
+                (c.kind === 'symbol' &&
+                  c.type === 'beacon' &&
+                  (c.fenceId === el.id || pointInShape(el, c.x, c.y))) ||
+                (c.kind === 'obstacle' &&
+                  (c.fenceId === el.id || pointInShape(el, c.x + c.w / 2, c.y + c.h / 2))),
             )
             .map((c) => ({ id: c.id, orig: c }))
         : el.kind === 'tunnel'
@@ -725,7 +747,7 @@ export default function MapBuilder() {
                 (c) =>
                   c.kind === 'symbol' &&
                   (c.type === 'beacon' || c.type === 'entrance') &&
-                  distToPolyline(el.path, c.x, c.y) <= (el.width ?? 18) / 2 + 6,
+                  distToPolyline(el.path, c.x, c.y) <= (el.width ?? DEFAULT_TUNNEL_WIDTH) / 2 + 6,
               )
               .map((c) => ({ id: c.id, orig: c }))
           : undefined
@@ -748,13 +770,14 @@ export default function MapBuilder() {
       }
       return { ...c, x: nx, y: ny }
     }
-    if (c.kind === 'room') {
+    if (c.kind === 'room' || c.kind === 'obstacle') {
       const [ncx, ncy] = orbit(c.x + c.w / 2, c.y + c.h / 2)
       const dx = ncx - (c.x + c.w / 2)
       const dy = ncy - (c.y + c.h / 2)
       const rot = normDeg(Math.round((c.rot ?? 0) + delta))
       const patch: Partial<BRoom> = { x: c.x + dx, y: c.y + dy, rot: rot === 0 ? undefined : rot }
-      if (c.pts) patch.pts = c.pts.map((p) => ({ ...p, x: p.x + dx, y: p.y + dy }))
+      if (c.kind === 'room' && c.pts)
+        patch.pts = c.pts.map((p) => ({ ...p, x: p.x + dx, y: p.y + dy }))
       return { ...c, ...patch } as BElement
     }
     return c
@@ -874,7 +897,7 @@ export default function MapBuilder() {
               const adx = Math.max(X_MIN, Math.min(X_MAX - o.w, o.x + dx)) - o.x
               const ady = Math.max(Y_MIN, Math.min(Y_MAX - o.h, o.y + dy)) - o.y
               const co = ch.orig
-              if (co.kind === 'symbol')
+              if (co.kind === 'symbol' || co.kind === 'obstacle')
                 return { ...el, x: co.x + adx, y: co.y + ady } as BElement
               if (co.kind === 'room') {
                 const patch: Partial<BRoom> = { x: co.x + adx, y: co.y + ady }
@@ -946,6 +969,17 @@ export default function MapBuilder() {
               path: o.path.map((p) => [p[0] + cdx, p[1] + cdy]),
               bpts: o.bpts?.map((p) => ({ ...p, x: p.x + cdx, y: p.y + cdy })),
             } as BElement
+          }
+          if (o.kind === 'obstacle') {
+            /* 장애물은 지오펜스 내부에서만 이동 — 타 지오펜스로 이동 시 소속 변경 */
+            const ox = Math.max(X_MIN, Math.min(X_MAX - o.w, o.x + dx))
+            const oy = Math.max(Y_MIN, Math.min(Y_MAX - o.h, o.y + dy))
+            const bf = prev.find(
+              (e): e is BGeofence =>
+                e.kind === 'fence' && pointInShape(e, ox + o.w / 2, oy + o.h / 2),
+            )
+            if (bf) return { ...el, x: ox, y: oy, fenceId: bf.id, level: bf.level } as BElement
+            return el
           }
           const nx = Math.max(X_MIN, Math.min(X_MAX - o.w, o.x + dx))
           const ny = Math.max(Y_MIN, Math.min(Y_MAX - o.h, o.y + dy))
@@ -1046,7 +1080,7 @@ export default function MapBuilder() {
 
   /* ── 다각형 편집 핸들 — 정점 드래그 이동 · Alt+클릭 삭제,
    * 변 중점 드래그 → 곡선 제어점 삽입 후 즉시 드래그 ── */
-  const onVertexDown = (e: React.PointerEvent, el: ShapedEl, index: number) => {
+  const onVertexDown = (e: React.PointerEvent, el: PolyShapedEl, index: number) => {
     if (e.button !== 0 || e.shiftKey || !el.pts) return
     e.stopPropagation()
     if (e.altKey) {
@@ -1065,7 +1099,7 @@ export default function MapBuilder() {
     }
   }
 
-  const onEdgeDown = (e: React.PointerEvent, el: ShapedEl, index: number) => {
+  const onEdgeDown = (e: React.PointerEvent, el: PolyShapedEl, index: number) => {
     if (e.button !== 0 || e.shiftKey || !el.pts) return
     e.stopPropagation()
     svgRef.current?.setPointerCapture(e.pointerId)
@@ -1122,6 +1156,62 @@ export default function MapBuilder() {
     )
     /* 삽입 시점에 이미 히스토리를 쌓았으므로 이어지는 드래그는 추가 푸시 없음 */
     dragRef.current = { mode: 'tunvertex', id: t.id, index: index + 1, before: null, moved: false }
+  }
+
+  /** 공동구 경로 → 통로 폭 밴드 폴리곤 — 각 정점에서 마이터(이웃 법선 평균) 방향으로
+   * 양측 오프셋한 좌/우 라인을 이어 닫는다. 마이터 길이는 2.5배로 상한 */
+  const tunnelBandPts = (path: Array<[number, number]>, half: number): BPoint[] => {
+    const n = path.length
+    if (n < 2) return []
+    const norm = (dx: number, dy: number): [number, number] => {
+      const l = Math.hypot(dx, dy) || 1
+      return [-dy / l, dx / l]
+    }
+    const left: BPoint[] = []
+    const right: BPoint[] = []
+    for (let i = 0; i < n; i++) {
+      const p = path[i]
+      const prev = path[Math.max(0, i - 1)]
+      const next = path[Math.min(n - 1, i + 1)]
+      const n1 = i === 0 ? norm(next[0] - p[0], next[1] - p[1]) : norm(p[0] - prev[0], p[1] - prev[1])
+      const n2 = i === n - 1 ? n1 : norm(next[0] - p[0], next[1] - p[1])
+      let mx = n1[0] + n2[0]
+      let my = n1[1] + n2[1]
+      const ml = Math.hypot(mx, my)
+      if (ml < 1e-6) {
+        mx = n1[0]
+        my = n1[1]
+      } else {
+        mx /= ml
+        my /= ml
+      }
+      const off = half / Math.max(0.4, mx * n1[0] + my * n1[1])
+      left.push({ x: +(p[0] + mx * off).toFixed(1), y: +(p[1] + my * off).toFixed(1) })
+      right.push({ x: +(p[0] - mx * off).toFixed(1), y: +(p[1] - my * off).toFixed(1) })
+    }
+    right.reverse()
+    return [...left, ...right]
+  }
+
+  /** 공동구 속성의 [지오펜스로 영역 복사] — 통로 밴드를 다각형 지오펜스로 생성 */
+  const copyTunnelToFence = (t: BTunnel) => {
+    const pts = tunnelBandPts(t.path, (t.width ?? DEFAULT_TUNNEL_WIDTH) / 2)
+    if (pts.length < 3) {
+      showNotice('경유점이 2개 이상이어야 지오펜스로 복사할 수 있습니다')
+      return
+    }
+    const fence: BElement = {
+      id: newId(),
+      kind: 'fence',
+      name: `${t.name} 구역`,
+      shape: 'poly',
+      ...ptsBBox(pts),
+      pts,
+      level: t.level,
+    }
+    commit([...elements, fence])
+    setSelectedId(fence.id)
+    showNotice(`'${fence.name}' 지오펜스가 생성되었습니다 — 비콘 배치·리포트 대상이 됩니다`)
   }
 
   /* 회전 핸들 — 드래그: bbox 중심 기준 회전 · Alt+클릭: 0°로 초기화.
@@ -1182,6 +1272,38 @@ export default function MapBuilder() {
   /* ── 심볼 드래그&드롭 ── */
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault()
+    /* 장애물(구조물) 드롭 — 지오펜스 내부에만, 소속·층 자동 상속 */
+    const obShape = e.dataTransfer.getData('text/obstacle')
+    if (obShape === 'rect' || obShape === 'ellipse') {
+      const [omx, omy] = toMap(e.clientX, e.clientY)
+      const opx = snap(omx)
+      const opy = snap(omy)
+      const bf = elements.find(
+        (el): el is BGeofence => el.kind === 'fence' && pointInShape(el, opx, opy),
+      )
+      if (!bf) {
+        showNotice('장애물(구조물)은 지오펜스 내부에만 배치할 수 있습니다 — 먼저 지오펜스를 그려주세요')
+        return
+      }
+      const def = OBSTACLE_DEFS.find((d) => d.shape === obShape)!
+      const n = elements.filter((el) => el.kind === 'obstacle').length + 1
+      const ob: BElement = {
+        id: newId(),
+        kind: 'obstacle',
+        name: `OB-${String(n).padStart(2, '0')}`,
+        fenceId: bf.id,
+        level: bf.level,
+        shape: obShape,
+        x: opx - def.w / 2,
+        y: opy - def.h / 2,
+        w: def.w,
+        h: def.h,
+        effect: 'blocked',
+      }
+      commit([...elements, ob])
+      setSelectedId(ob.id)
+      return
+    }
     const type = e.dataTransfer.getData('text/symbol') as SymbolType
     if (!SYMBOL_DEFS.some((s) => s.type === type)) return
     if (protectedEdit && type !== 'beacon') {
@@ -1335,10 +1457,15 @@ export default function MapBuilder() {
 
   /* 선택된 형태 요소 — 다각형이면 정점/곡선 편집 핸들 표시 */
   const shaped: ShapedEl | null =
-    selected && (selected.kind === 'building' || selected.kind === 'fence' || selected.kind === 'room')
+    selected &&
+    (selected.kind === 'building' ||
+      selected.kind === 'fence' ||
+      selected.kind === 'room' ||
+      selected.kind === 'obstacle')
       ? selected
       : null
-  const shapedPoly = shaped && shaped.shape === 'poly' && shaped.pts ? shaped : null
+  const shapedPoly =
+    shaped && shaped.kind !== 'obstacle' && shaped.shape === 'poly' && shaped.pts ? shaped : null
   /* 선택된 공동구 — 정점 이동/삭제 + 구간 중점 드래그로 곡선 */
   const selTunnel: BTunnel | null = selected && selected.kind === 'tunnel' ? selected : null
 
@@ -1562,6 +1689,15 @@ export default function MapBuilder() {
         </Tip>
         <div className="ml-auto flex items-center gap-2">
           <span className="hidden text-xs text-muted 2xl:block">자동 저장 · 대시보드 연동</span>
+          <Tip label="비콘 배치 리포트 — 지오펜스별 최적 비콘 수량·위치 산출">
+            <button
+              onClick={() => navigate('/beacon-report')}
+              className="flex h-9 cursor-pointer items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink"
+            >
+              <ClipboardList size={15} />
+              리포트
+            </button>
+          </Tip>
           <button
             onClick={() => setShow3D((v) => !v)}
             className={`flex h-9 cursor-pointer items-center gap-1.5 rounded-lg px-3 text-sm font-medium transition-colors ${
@@ -1644,7 +1780,7 @@ export default function MapBuilder() {
                       points={ptsStr}
                       fill="none"
                       stroke="#3b82f6"
-                      strokeWidth={el.width ?? 18}
+                      strokeWidth={el.width ?? DEFAULT_TUNNEL_WIDTH}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       opacity={sel ? 0.32 : 0.16}
@@ -1821,6 +1957,52 @@ export default function MapBuilder() {
                       transform={counterRot(el.x + 6, el.y + 14)}
                     >
                       {el.name} · {levelName(el.level)}
+                    </text>
+                  </g>
+                )
+              })}
+
+              {/* 장애물(구조물) — 지오펜스 내부 원/직각 오브젝트. 비콘 벽면 설치면이자 차폐 원인 */}
+              {elements.map((el) => {
+                if (el.kind !== 'obstacle' || !passLevel(el.level)) return null
+                const sel = el.id === selectedId
+                const cx = el.x + el.w / 2
+                const cy = el.y + el.h / 2
+                const obProps = {
+                  fill: '#64748b',
+                  fillOpacity: 0.3,
+                  stroke: sel ? 'var(--primary)' : '#94a3b8',
+                  strokeWidth: sel ? 2 : 1.2,
+                  style: { cursor: editCursor(el) },
+                  onPointerDown: (e: React.PointerEvent) => onElementDown(e, el),
+                }
+                const obTitle = (
+                  <title>{`${el.name} · 장애물(구조물) · ${levelName(el.level)} · ${
+                    el.effect === 'blocked' ? '차폐' : el.effect === 'heavy' ? '강한 감쇠' : '경미 감쇠'
+                  }${el.rot ? ` · 회전 ${el.rot}°` : ''}`}</title>
+                )
+                return (
+                  <g key={el.id} opacity={el.level < 0 ? 0.85 : 1}>
+                    <g transform={el.rot ? `rotate(${el.rot} ${cx} ${cy})` : undefined}>
+                      {el.shape === 'ellipse' ? (
+                        <ellipse cx={cx} cy={cy} rx={el.w / 2} ry={el.h / 2} {...obProps}>{obTitle}</ellipse>
+                      ) : (
+                        <rect x={el.x} y={el.y} width={el.w} height={el.h} rx={2} {...obProps}>{obTitle}</rect>
+                      )}
+                      {/* 해칭 — 물리 구조물 표기 */}
+                      <line x1={el.x + 2} y1={el.y + 2} x2={el.x + el.w - 2} y2={el.y + el.h - 2} stroke="#94a3b8" strokeWidth="0.8" strokeOpacity="0.5" pointerEvents="none" />
+                    </g>
+                    <text
+                      x={cx}
+                      y={cy + 2.5}
+                      textAnchor="middle"
+                      fontSize={7}
+                      fontWeight={600}
+                      fill="var(--text-secondary)"
+                      pointerEvents="none"
+                      transform={counterRot(cx, cy + 2.5)}
+                    >
+                      {el.name}
                     </text>
                   </g>
                 )
@@ -2428,7 +2610,9 @@ export default function MapBuilder() {
                           ? '지하 공동구'
                           : selected.kind === 'room'
                             ? '작업영역'
-                            : '심볼'}
+                            : selected.kind === 'obstacle'
+                              ? '장애물(구조물)'
+                              : '심볼'}
                   </span>
                 </p>
                 <button
@@ -2447,18 +2631,18 @@ export default function MapBuilder() {
                     </Field>
                     <div className="grid grid-cols-2 gap-2">
                       <Field label="지상 층수">
-                        <select className={SELECT_CLS} value={selected.floorsUp} onChange={(e) => patchFloors(selected, Number(e.target.value), selected.floorsDown)}>
+                        <Select className={SELECT_CLS} value={selected.floorsUp} onChange={(e) => patchFloors(selected, Number(e.target.value), selected.floorsDown)}>
                           {[0, 1, 2, 3, 4, 5].map((n) => (
                             <option key={n} value={n}>{n}층</option>
                           ))}
-                        </select>
+                        </Select>
                       </Field>
                       <Field label="지하 층수">
-                        <select className={SELECT_CLS} value={selected.floorsDown} onChange={(e) => patchFloors(selected, selected.floorsUp, Number(e.target.value))}>
+                        <Select className={SELECT_CLS} value={selected.floorsDown} onChange={(e) => patchFloors(selected, selected.floorsUp, Number(e.target.value))}>
                           {[0, 1, 2, 3].map((n) => (
                             <option key={n} value={n}>{n}층</option>
                           ))}
-                        </select>
+                        </Select>
                       </Field>
                     </div>
                     {selected.shape !== 'poly' ? (
@@ -2507,11 +2691,11 @@ export default function MapBuilder() {
                       <input className={INPUT_CLS} value={selected.name} onChange={(e) => patchEl(selected.id, { name: e.target.value })} />
                     </Field>
                     <Field label="적용 층">
-                      <select className={SELECT_CLS} value={selected.level} onChange={(e) => patchEl(selected.id, { level: Number(e.target.value) })}>
+                      <Select className={SELECT_CLS} value={selected.level} onChange={(e) => patchEl(selected.id, { level: Number(e.target.value) })}>
                         {(levelOpts.includes(selected.level) ? levelOpts : [...levelOpts, selected.level]).map((lv) => (
                           <option key={lv} value={lv}>{levelName(lv)}</option>
                         ))}
-                      </select>
+                      </Select>
                     </Field>
                     <p className="text-[11px] text-muted">
                       형태: {selected.shape === 'rect' ? '직각' : selected.shape === 'ellipse' ? '타원형' : '다각형'}
@@ -2537,11 +2721,11 @@ export default function MapBuilder() {
                       <input className={INPUT_CLS} value={selected.name} onChange={(e) => patchEl(selected.id, { name: e.target.value })} />
                     </Field>
                     <Field label="적용 층">
-                      <select className={SELECT_CLS} value={selected.level} onChange={(e) => patchEl(selected.id, { level: Number(e.target.value) })}>
+                      <Select className={SELECT_CLS} value={selected.level} onChange={(e) => patchEl(selected.id, { level: Number(e.target.value) })}>
                         {(roomOpts.includes(selected.level) ? roomOpts : [...roomOpts, selected.level]).map((lv) => (
                           <option key={lv} value={lv}>{levelName(lv)}</option>
                         ))}
-                      </select>
+                      </Select>
                     </Field>
                     <p className="text-[11px] text-muted">
                       형태: {selected.shape === 'ellipse' ? '타원형' : selected.shape === 'poly' ? '다각형' : '직각'}
@@ -2560,6 +2744,72 @@ export default function MapBuilder() {
                   )
                 })()}
 
+                {selected.kind === 'obstacle' && (() => {
+                  const obFence = elements.find(
+                    (e): e is BGeofence => e.kind === 'fence' && e.id === selected.fenceId,
+                  )
+                  return (
+                    <div className="space-y-3">
+                      <Field label="장애물 이름">
+                        <input className={INPUT_CLS} value={selected.name} onChange={(e) => patchEl(selected.id, { name: e.target.value })} />
+                      </Field>
+                      <Field label="차폐 효과">
+                        <Select
+                          className={SELECT_CLS}
+                          value={selected.effect}
+                          onChange={(e) =>
+                            patchEl(selected.id, { effect: e.target.value as BObstacle['effect'] })
+                          }
+                        >
+                          <option value="blocked">차폐 — 신호 차단 (콘크리트 등)</option>
+                          <option value="heavy">강한 감쇠 (금속 설비)</option>
+                          <option value="light">경미한 감쇠 (경량 칸막이)</option>
+                        </Select>
+                      </Field>
+                      <div className="grid grid-cols-2 gap-2">
+                        <Field label="너비">
+                          <input
+                            type="number"
+                            className={INPUT_CLS}
+                            value={selected.w}
+                            min={6}
+                            max={200}
+                            step={2}
+                            onChange={(e) => {
+                              const v = Number(e.target.value)
+                              if (!Number.isNaN(v)) patchEl(selected.id, { w: Math.max(6, Math.min(200, v)) })
+                            }}
+                          />
+                        </Field>
+                        <Field label="높이(세로)">
+                          <input
+                            type="number"
+                            className={INPUT_CLS}
+                            value={selected.h}
+                            min={6}
+                            max={200}
+                            step={2}
+                            onChange={(e) => {
+                              const v = Number(e.target.value)
+                              if (!Number.isNaN(v)) patchEl(selected.id, { h: Math.max(6, Math.min(200, v)) })
+                            }}
+                          />
+                        </Field>
+                      </div>
+                      <p className="text-[11px] text-muted">
+                        형태: {selected.shape === 'ellipse' ? '원형' : '직각'} ·{' '}
+                        {levelName(selected.level)}
+                        {selected.rot ? ` · 회전 ${selected.rot}°` : ''}
+                        {' · '}소속 지오펜스: {obFence?.name ?? '없음'}
+                      </p>
+                      <p className="text-[11px] leading-relaxed text-muted">
+                        비콘 배치 리포트에서 이 구조물의 벽면은 비콘 설치면으로, 몸체는
+                        신호 차폐(음영) 원인으로 반영됩니다. 지오펜스 내부에서만 이동할 수 있습니다.
+                      </p>
+                    </div>
+                  )
+                })()}
+
                 {selected.kind === 'tunnel' && (
                   <div className="space-y-3">
                     <Field label="공동구 이름">
@@ -2567,24 +2817,26 @@ export default function MapBuilder() {
                     </Field>
                     <div className="grid grid-cols-2 gap-2">
                       <Field label="설치 층">
-                        <select className={SELECT_CLS} value={selected.level} onChange={(e) => patchEl(selected.id, { level: Number(e.target.value) })}>
+                        <Select className={SELECT_CLS} value={selected.level} onChange={(e) => patchEl(selected.id, { level: Number(e.target.value) })}>
                           {(tunnelLevelOpts.includes(selected.level) ? tunnelLevelOpts : [...tunnelLevelOpts, selected.level]).map((lv) => (
                             <option key={lv} value={lv}>{levelName(lv)}</option>
                           ))}
-                        </select>
+                        </Select>
                       </Field>
-                      <Field label="통로 폭">
+                      <Field label="통로 폭(m)">
                         <input
                           type="number"
                           className={INPUT_CLS}
-                          value={selected.width ?? 18}
-                          min={10}
-                          max={40}
-                          step={2}
+                          value={selected.width ?? DEFAULT_TUNNEL_WIDTH}
+                          min={MIN_TUNNEL_WIDTH}
+                          max={MAX_TUNNEL_WIDTH}
+                          step={1}
                           onChange={(e) => {
                             const v = Number(e.target.value)
                             if (!Number.isNaN(v))
-                              patchEl(selected.id, { width: Math.max(10, Math.min(40, v)) })
+                              patchEl(selected.id, {
+                                width: Math.max(MIN_TUNNEL_WIDTH, Math.min(MAX_TUNNEL_WIDTH, v)),
+                              })
                           }}
                         />
                       </Field>
@@ -2594,6 +2846,17 @@ export default function MapBuilder() {
                       {(selected.bpts?.some((p) => p.c) ?? false) &&
                         ` · 곡선 ${selected.bpts!.filter((p) => p.c).length}구간`}
                       {' '}· 구간 중점 드래그로 곡선 · 폭은 2D/3D·관제 지도에 반영
+                    </p>
+                    <button
+                      onClick={() => copyTunnelToFence(selected)}
+                      className="flex h-9 w-full cursor-pointer items-center justify-center gap-1.5 rounded-[10px] border border-primary/40 bg-primary/10 text-xs font-semibold text-primary transition-colors hover:bg-primary/20"
+                    >
+                      <Copy size={13} />
+                      지오펜스로 영역 복사
+                    </button>
+                    <p className="text-[11px] leading-relaxed text-muted">
+                      공동구 경로와 통로 폭을 그대로 감싸는 다각형 지오펜스를 생성합니다 —
+                      좁은 통로를 직접 그리지 않고도 비콘 배치·리포트 대상으로 쓸 수 있습니다.
                     </p>
                   </div>
                 )}
@@ -2620,14 +2883,14 @@ export default function MapBuilder() {
                       <>
                         <div className="grid grid-cols-2 gap-2">
                           <Field label="시작 층">
-                            <select className={SELECT_CLS} value={selected.level} onChange={(e) => patchEl(selected.id, { level: Number(e.target.value) })}>
+                            <Select className={SELECT_CLS} value={selected.level} onChange={(e) => patchEl(selected.id, { level: Number(e.target.value) })}>
                               {(symOpts.includes(selected.level) ? symOpts : [...symOpts, selected.level]).map((lv) => (
                                 <option key={lv} value={lv}>{levelName(lv)}</option>
                               ))}
-                            </select>
+                            </Select>
                           </Field>
                           <Field label="도착 층">
-                            <select
+                            <Select
                               className={SELECT_CLS}
                               value={selected.toLevel ?? -1}
                               onChange={(e) => patchEl(selected.id, { toLevel: Number(e.target.value) })}
@@ -2638,7 +2901,7 @@ export default function MapBuilder() {
                               ).map((lv) => (
                                 <option key={lv} value={lv}>{levelName(lv)}</option>
                               ))}
-                            </select>
+                            </Select>
                           </Field>
                         </div>
                         <Field label="계단 폭">
@@ -2679,14 +2942,14 @@ export default function MapBuilder() {
                       <>
                         <div className="grid grid-cols-2 gap-2">
                           <Field label="시작 층">
-                            <select className={SELECT_CLS} value={selected.level} onChange={(e) => patchEl(selected.id, { level: Number(e.target.value) })}>
+                            <Select className={SELECT_CLS} value={selected.level} onChange={(e) => patchEl(selected.id, { level: Number(e.target.value) })}>
                               {(symOpts.includes(selected.level) ? symOpts : [...symOpts, selected.level]).map((lv) => (
                                 <option key={lv} value={lv}>{levelName(lv)}</option>
                               ))}
-                            </select>
+                            </Select>
                           </Field>
                           <Field label="종료 층">
-                            <select
+                            <Select
                               className={SELECT_CLS}
                               value={selected.toLevel ?? selected.level}
                               onChange={(e) => patchEl(selected.id, { toLevel: Number(e.target.value) })}
@@ -2697,7 +2960,7 @@ export default function MapBuilder() {
                               ).map((lv) => (
                                 <option key={lv} value={lv}>{levelName(lv)}</option>
                               ))}
-                            </select>
+                            </Select>
                           </Field>
                         </div>
                         <div className="grid grid-cols-2 gap-2">
@@ -2759,7 +3022,7 @@ export default function MapBuilder() {
                     ) : selected.type === 'gateway' ? (
                       <>
                         <Field label="설치 위치">
-                          <select
+                          <Select
                             className={SELECT_CLS}
                             value={selected.roof ? 'roof' : String(selected.level)}
                             onChange={(e) => {
@@ -2776,7 +3039,7 @@ export default function MapBuilder() {
                               <option key={lv} value={String(lv)}>{levelName(lv)}</option>
                             ))}
                             {buildingAt(selected.x, selected.y) && <option value="roof">옥상</option>}
-                          </select>
+                          </Select>
                         </Field>
                         <p className="text-[11px] leading-relaxed text-muted">
                           {selected.roof
@@ -2787,11 +3050,11 @@ export default function MapBuilder() {
                     ) : (
                       <>
                         <Field label="설치 층">
-                          <select className={SELECT_CLS} value={selected.level} onChange={(e) => patchEl(selected.id, { level: Number(e.target.value) })}>
+                          <Select className={SELECT_CLS} value={selected.level} onChange={(e) => patchEl(selected.id, { level: Number(e.target.value) })}>
                             {(symOpts.includes(selected.level) ? symOpts : [...symOpts, selected.level]).map((lv) => (
                               <option key={lv} value={lv}>{levelName(lv)}</option>
                             ))}
-                          </select>
+                          </Select>
                         </Field>
                         {selected.type === 'beacon' && (
                           <p className="text-[11px] leading-relaxed text-muted">
@@ -2879,12 +3142,12 @@ export default function MapBuilder() {
               paletteOpen ? 'translate-y-0 opacity-100' : 'pointer-events-none translate-y-10 opacity-0'
             }`}
           >
-            <div className="w-[min(94%,960px)] rounded-2xl border border-hairline bg-surface-1/95 px-4 pb-4 pt-3 shadow-2xl backdrop-blur">
+            <div className="w-fit max-w-[97%] rounded-2xl border border-hairline bg-surface-1/95 px-3.5 pb-4 pt-3 shadow-2xl backdrop-blur">
               <div className="flex items-center gap-3">
                 <span className="text-xs font-bold text-ink">심볼 팔레트</span>
                 <span className="hidden text-[10px] text-muted lg:block">캔버스로 드래그하여 배치</span>
                 <span className="ml-auto text-[10px] tabular-nums text-muted">
-                  건물 {buildings.length} · 작업영역 {roomEls.length} · 지오펜스 {fences.length} · 공동구 {tunnels.length} · 심볼 {symbols.length}
+                  건물 {buildings.length} · 작업영역 {roomEls.length} · 지오펜스 {fences.length} · 공동구 {tunnels.length} · 심볼 {symbols.length} · 장애물 {elements.filter((e) => e.kind === 'obstacle').length}
                 </span>
                 <button
                   onClick={() => setPaletteOpen(false)}
@@ -2945,6 +3208,36 @@ export default function MapBuilder() {
                         </Tip>
                         )
                       })}
+                      {/* 장애물(구조물) — 지오펜스 소속 요소라 같은 그룹에 배치.
+                       * 보호 편집 모드에서도 배치 가능 (플래닝 요소) */}
+                      {g.key === 'fence' &&
+                        OBSTACLE_DEFS.map((s) => (
+                          <Tip key={s.shape} label={`${s.label} — 벽면은 비콘 설치면, 몸체는 신호 차폐(음영)로 리포트에 반영`}>
+                            <div
+                              draggable
+                              onDragStart={(e) => e.dataTransfer.setData('text/obstacle', s.shape)}
+                              className="group flex w-[86px] shrink-0 cursor-grab flex-col items-center gap-1.5 rounded-xl border border-hairline bg-surface-2/40 px-2 pb-2 pt-2.5 transition-all duration-150 hover:-translate-y-0.5 hover:border-primary/50 hover:bg-surface-2 hover:shadow-md active:cursor-grabbing"
+                            >
+                              <span className="flex size-9 items-center justify-center rounded-[10px] bg-slate-500 text-white shadow-sm transition-transform duration-150 group-hover:scale-110">
+                                {s.shape === 'ellipse' ? (
+                                  <svg width="15" height="15" viewBox="0 0 15 15">
+                                    <circle cx="7.5" cy="7.5" r="5.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
+                                    <line x1="3.9" y1="3.9" x2="11.1" y2="11.1" stroke="currentColor" strokeWidth="1.2" />
+                                  </svg>
+                                ) : (
+                                  <svg width="15" height="15" viewBox="0 0 15 15">
+                                    <rect x="2" y="3.5" width="11" height="8" rx="1" fill="none" stroke="currentColor" strokeWidth="1.6" />
+                                    <line x1="3.5" y1="5" x2="11.5" y2="10.5" stroke="currentColor" strokeWidth="1.2" />
+                                  </svg>
+                                )}
+                              </span>
+                              <p className="whitespace-nowrap text-[11px] font-medium leading-none text-ink">{s.label}</p>
+                              <span className="rounded-full bg-page/70 px-1.5 py-0.5 font-mono text-[8px] leading-none text-muted">
+                                {s.code}
+                              </span>
+                            </div>
+                          </Tip>
+                        ))}
                     </div>
                   </div>
                 ))}

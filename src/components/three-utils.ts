@@ -265,11 +265,11 @@ export function tunnelMaterials(pageColor: string) {
 }
 
 /** 공동구 세그먼트 — 바닥 슬래브 + 낮은 양측 벽 (중심 원점, X축 방향 길이 len).
- * width는 통로 폭(기본 18) */
+ * width는 통로 폭(기본 10m) */
 export function tunnelSegment(
   len: number,
   mats: ReturnType<typeof tunnelMaterials>,
-  width = 18,
+  width = 10,
 ): THREE.Group {
   const seg = new THREE.Group()
   seg.add(new THREE.Mesh(new THREE.BoxGeometry(len + 4, 1.2, width), mats.floor))

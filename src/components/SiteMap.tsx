@@ -32,7 +32,7 @@ import {
   type LiveWorker,
   type Zone,
 } from '../data/site'
-import { FENCE_COLOR } from '../data/builder'
+import { DEFAULT_TUNNEL_WIDTH, FENCE_COLOR } from '../data/builder'
 import { useSiteModel, type SiteModel } from '../data/siteModel'
 import TileLayer, { Compass, ScaleBar, type BgKind, type ViewBox } from './TileLayer'
 /* three.js 번들은 3D 모드 진입 시에만 로드 */
@@ -86,6 +86,7 @@ const ALL_LAYERS_ON: Record<LayerKey, boolean> = {
   stairs: true,
   rooms: true,
   fences: true,
+  obstacles: true,
   facilities: true,
 }
 
@@ -160,6 +161,13 @@ function LayerIcon({ k, is3d }: { k: LayerKey; is3d: boolean }) {
           style={{ borderColor: FENCE_COLOR, background: 'rgba(34,211,238,0.15)' }}
         />
       )
+    case 'obstacles':
+      return (
+        <svg width="15" height="15" viewBox="0 0 16 16">
+          <rect x="2" y="3" width="12" height="10" rx="1.5" fill="#64748b" fillOpacity="0.45" stroke="#94a3b8" strokeWidth="1.1" />
+          <line x1="4" y1="5" x2="12" y2="11" stroke="#94a3b8" strokeWidth="0.9" opacity="0.8" />
+        </svg>
+      )
     case 'facilities':
       /* 출입구 개구부 심볼과 동일한 형태·색 */
       return (
@@ -195,6 +203,7 @@ const LAYER_ROWS: Array<{ key: LayerKey; label: string }> = [
   { key: 'gateways', label: '게이트웨이' },
   { key: 'gas', label: '고정형 가스검침기' },
   { key: 'fences', label: '지오펜스' },
+  { key: 'obstacles', label: '장애물(구조물)' },
   { key: 'facilities', label: '기타 설비' },
   { key: 'tunnels', label: '지하 공동구 · 출입구' },
   { key: 'stairs', label: '계단실' },
@@ -205,6 +214,47 @@ function parsePoints(points: string): Array<[number, number]> {
     .trim()
     .split(/\s+/)
     .map((p) => p.split(',').map(Number) as [number, number])
+}
+
+function obstacleEffectLabel(effect: SiteModel['obstacles'][number]['effect']) {
+  return effect === 'blocked' ? '차폐' : effect === 'heavy' ? '강한 감쇠' : '경미 감쇠'
+}
+
+/** 맵 빌더와 동일한 장애물 footprint — 직각/원형·회전·해칭·이름 */
+function Obstacle2D({
+  obstacle,
+  fontSize = 7,
+  counterRot,
+}: {
+  obstacle: SiteModel['obstacles'][number]
+  fontSize?: number
+  counterRot?: (x: number, y: number) => string | undefined
+}) {
+  const cx = obstacle.x + obstacle.w / 2
+  const cy = obstacle.y + obstacle.h / 2
+  const title = `${obstacle.name} · 장애물(구조물) · ${FLOOR_SHORT[obstacle.floor]} · ${obstacleEffectLabel(obstacle.effect)}${obstacle.rot ? ` · 회전 ${obstacle.rot}°` : ''}`
+  const shapeProps = {
+    fill: '#64748b',
+    fillOpacity: 0.3,
+    stroke: '#94a3b8',
+    strokeWidth: 1.2,
+    vectorEffect: 'non-scaling-stroke' as const,
+  }
+  return (
+    <g pointerEvents="none" opacity={obstacle.floor !== 'F1' ? 0.85 : 1}>
+      <g transform={obstacle.rot ? `rotate(${obstacle.rot} ${cx} ${cy})` : undefined}>
+        {obstacle.shape === 'ellipse' ? (
+          <ellipse cx={cx} cy={cy} rx={obstacle.w / 2} ry={obstacle.h / 2} {...shapeProps}><title>{title}</title></ellipse>
+        ) : (
+          <rect x={obstacle.x} y={obstacle.y} width={obstacle.w} height={obstacle.h} rx="2" {...shapeProps}><title>{title}</title></rect>
+        )}
+        <line x1={obstacle.x + 2} y1={obstacle.y + 2} x2={obstacle.x + obstacle.w - 2} y2={obstacle.y + obstacle.h - 2} stroke="#94a3b8" strokeWidth="0.8" strokeOpacity="0.5" vectorEffect="non-scaling-stroke" />
+      </g>
+      <text x={cx} y={cy + 2.5} textAnchor="middle" fontSize={fontSize} fontWeight="600" fill="var(--text-secondary)" paintOrder="stroke" stroke="var(--page)" strokeWidth="1.5" transform={counterRot?.(cx, cy + 2.5)}>
+        {obstacle.name}
+      </text>
+    </g>
+  )
 }
 
 const toStr = (pts: Array<[number, number]>) =>
@@ -237,7 +287,7 @@ function connectedTunnelEntrances(
     tunnels.some(
       (tunnel) =>
         tunnel.level === (entrance.level ?? 'B1') &&
-        distanceToPath(tunnel.path, entrance.x, entrance.y) <= (tunnel.width ?? 18) / 2 + 6,
+        distanceToPath(tunnel.path, entrance.x, entrance.y) <= (tunnel.width ?? DEFAULT_TUNNEL_WIDTH) / 2 + 6,
     ),
   )
 }
@@ -337,8 +387,9 @@ const StaticLayers = memo(function StaticLayers({
       .map((r) => ({ ...r, ly: Math.min(...parsePoints(r.points).map((p) => p[1])) + 11 }))
     /* 지오펜스·기타 설비 — 엘리베이터는 연결된 모든 층에 표시 */
     const fences = model.geofences.filter((f) => f.floor === floor)
+    const obstacles = model.obstacles.filter((o) => o.floor === floor)
     const fcs = model.facilities.filter((f) => facilityOnFloor(f, floor))
-    return { zs, bs, gs, gds, tns, ents, tl, stairs, rms, fences, fcs }
+    return { zs, bs, gs, gds, tns, ents, tl, stairs, rms, fences, obstacles, fcs }
   }, [floor, model, zones, gateways, mapBeacons, gasDetectors, stairwells, rooms, utilityTunnels, tunnelEntrances, zoneRisk])
 
   const fontSize = Math.max(6, Math.min(14, 12 * k))
@@ -529,6 +580,10 @@ const StaticLayers = memo(function StaticLayers({
             {f.name}
           </text>
         </g>
+      ))}
+      {/* 지오펜스 내부 장애물 — 맵 빌더와 동일한 footprint·회전·해칭 */}
+      {show.obstacles && layers.obstacles.map((obstacle) => (
+        <Obstacle2D key={obstacle.id} obstacle={obstacle} fontSize={fontSize * 0.65} counterRot={counterRot} />
       ))}
       {/* 작업영역(Room) — 건물 내 세부 구획: 점선 구획선 + 이름 */}
       {show.rooms && layers.rms.map((r) => (
@@ -1130,6 +1185,12 @@ function ZoneDetailModal({
                         {f.name}
                       </text>
                     </g>
+                  ))}
+                {/* 지오펜스 내부 장애물 */}
+                {model.obstacles
+                  .filter((obstacle) => obstacle.floor === fl)
+                  .map((obstacle) => (
+                    <Obstacle2D key={obstacle.id} obstacle={obstacle} fontSize={7 * msc} />
                   ))}
                 {/* 작업영역(Room) — 선택 층의 건물 내 구획 */}
                 {rooms

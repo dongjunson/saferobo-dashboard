@@ -1,5 +1,32 @@
-import type { ReactNode } from 'react'
+import { ChevronDown } from 'lucide-react'
+import type { ReactNode, SelectHTMLAttributes } from 'react'
 import type { Severity } from '../data/mock'
+
+/** 네이티브 select의 OS별 화살표 차이를 제거한 공통 드롭다운 */
+export function Select({
+  children,
+  className = '',
+  fullWidth = true,
+  style,
+  ...props
+}: SelectHTMLAttributes<HTMLSelectElement> & { fullWidth?: boolean }) {
+  return (
+    <span className={`relative ${fullWidth ? 'block w-full' : 'inline-block'}`}>
+      <select
+        {...props}
+        className={`appearance-none ${className}`}
+        style={{ ...style, paddingRight: '2.5rem' }}
+      >
+        {children}
+      </select>
+      <ChevronDown
+        aria-hidden="true"
+        size={14}
+        className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-muted"
+      />
+    </span>
+  )
+}
 
 /* SafeRobo DS: 카드 = rounded-[14px] + ring-1 ring-white/5(다크) — 그림자 없음 */
 export function Card({

@@ -10,6 +10,8 @@ import Alerts from './pages/Alerts'
 /* 맵 빌더는 three.js(Builder3D)를 포함하는 무거운 라우트 — 진입 시에만 로드.
  * 관제 3D(Site3D)도 SiteMap 내부에서 lazy라 메인 번들에는 three.js가 빠진다. */
 const MapBuilder = lazy(() => import('./pages/MapBuilder'))
+/* 비콘 배치 리포트 — Planning Worker 포함, 진입 시에만 로드 */
+const BeaconReport = lazy(() => import('./pages/BeaconReport'))
 
 export default function App() {
   return (
@@ -27,6 +29,20 @@ export default function App() {
               }
             >
               <MapBuilder />
+            </Suspense>
+          }
+        />
+        <Route
+          path="/beacon-report"
+          element={
+            <Suspense
+              fallback={
+                <div className="flex h-full items-center justify-center bg-page text-sm text-muted">
+                  리포트 로딩 중…
+                </div>
+              }
+            >
+              <BeaconReport />
             </Suspense>
           }
         />

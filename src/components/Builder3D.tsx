@@ -18,7 +18,7 @@ import {
   tunnelSegment,
   updateElevatorCars,
 } from './three-utils'
-import { FENCE_COLOR, pointInShape, shapeOutline, symbolDef, type BElement } from '../data/builder'
+import { DEFAULT_TUNNEL_WIDTH, FENCE_COLOR, pointInShape, shapeOutline, symbolDef, type BElement } from '../data/builder'
 import { Compass } from './TileLayer'
 
 /* ── 맵 빌더 3D 미리보기 ─────────────────────────────────────────────
@@ -243,7 +243,7 @@ export default function Builder3D({ elements }: { elements: BElement[] }) {
           const [x1, z1] = el.path[i + 1]
           const len = Math.hypot(x1 - x0, z1 - z0)
           if (len < 1) continue
-          const seg = tunnelSegment(len, tunMats, el.width ?? 18)
+          const seg = tunnelSegment(len, tunMats, el.width ?? DEFAULT_TUNNEL_WIDTH)
           seg.position.set((x0 + x1) / 2, yBase + (i % 7) * 0.03, (z0 + z1) / 2)
           seg.rotation.y = -Math.atan2(z1 - z0, x1 - x0)
           group.add(seg)
@@ -269,6 +269,29 @@ export default function Builder3D({ elements }: { elements: BElement[] }) {
           new THREE.LineBasicMaterial({ color: '#334155', transparent: true, opacity: 0.85 }),
         )
         group.add(line)
+      } else if (el.kind === 'obstacle') {
+        /* 장애물(구조물) — 비콘 설치면·차폐 원인. 층 바닥 위 솔리드 볼륨 */
+        const oy = levelBaseY(el.level)
+        const oh = 12
+        const geo =
+          el.shape === 'ellipse'
+            ? new THREE.CylinderGeometry(0.5, 0.5, oh, 28)
+            : new THREE.BoxGeometry(el.w, oh, el.h)
+        const mesh = new THREE.Mesh(
+          geo,
+          new THREE.MeshStandardMaterial({ color: '#64748b', roughness: 0.8, transparent: true, opacity: 0.75 }),
+        )
+        if (el.shape === 'ellipse') mesh.scale.set(el.w, 1, el.h)
+        mesh.rotation.y = (-(el.rot ?? 0) * Math.PI) / 180
+        mesh.position.set(el.x + el.w / 2, oy + oh / 2, el.y + el.h / 2)
+        const edge = new THREE.LineSegments(
+          new THREE.EdgesGeometry(geo, el.shape === 'ellipse' ? 30 : 1),
+          new THREE.LineBasicMaterial({ color: '#94a3b8', transparent: true, opacity: 0.7 }),
+        )
+        edge.scale.copy(mesh.scale)
+        edge.rotation.copy(mesh.rotation)
+        edge.position.copy(mesh.position)
+        group.add(mesh, edge)
       } else {
         /* 심볼 — 대시보드(Site3D)와 동일한 장비 모델 사용 */
         const baseY = levelBaseY(el.level)

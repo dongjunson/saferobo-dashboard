@@ -131,7 +131,7 @@ export interface TunnelSegment {
   path: Array<[number, number]>
   /** 공동구가 지나는 층 (B1/B2) */
   level: FloorId
-  /** 통로 폭 — 맵 빌더 제작 공동구용 (기본 18) */
+  /** 통로 폭(m) — 맵 빌더 제작 공동구용 (기본 10) */
   width?: number
 }
 
